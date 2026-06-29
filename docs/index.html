@@ -1161,9 +1161,10 @@ function toggleNota(){
   </div>
 </div>
 
+
 <script>
 // ── Variables globales ─────────────────────────────────────────────────────────────────
-// Generado automáticamente por generar.py el 2026-06-29 16:13
+// Generado automáticamente por generar.py el 2026-06-29 16:23
 // Período: 2025-10-01 al 2026-06-28 | 24,668 operaciones | 937 asociados
 // ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -1179,22 +1180,2034 @@ let DATA_RAW={"fechas":["2025-10-01","2025-10-02","2025-10-03","2025-10-04","202
 
 // ── Inicialización dinámica ────────────────────────────────────────────────────────────
 (function(){
+  // Poblar select de meses
   const sel=document.getElementById('f-mes');
   if(sel){
     const mesNombres={"2025-10":"Oct 2025","2025-11":"Nov 2025","2025-12":"Dic 2025","2026-01":"Ene 2026","2026-02":"Feb 2026","2026-03":"Mar 2026","2026-04":"Abr 2026","2026-05":"May 2026","2026-06":"Jun 2026","2026-07":"Jul 2026","2026-08":"Ago 2026","2026-09":"Sep 2026"};
     ["2025-10","2025-11","2025-12","2026-01","2026-02","2026-03","2026-04","2026-05","2026-06"].forEach(m=>{
       if(!m)return;
-      const [y,mo]=m.split('-');
-      sel.innerHTML+= `<option value="${m}">${mesNombres[m]||m}</option>`;
+      sel.innerHTML+=`<option value="${m}">${mesNombres[m]||m}</option>`;
     });
   }
   // Actualizar header período
   const hp=document.getElementById('hdr-periodo');
   if(hp) hp.textContent='Oct 2025 – Jun 2026';
+  // Inicializar
+  if(typeof initCalFechas==='function') initCalFechas();
 })();
 render();
 </script>
 
+<script>
+function fmtCOP(v){return '$'+Math.round(v).toLocaleString('es-CO');}
+function pct(a,b){return b>0?Math.round(a/b*100)+'%':'0%';}
+function setVol(){ /* CV% eliminada */ }
+
+// ── Filtros ──────────────────────────────────────────────────────────────────
+
+// ── Filtro de rango de fechas (calendario) ───────────────────────────────────
+
+// Estado del calendario
+let _calMode = 'desde';        // 'desde' | 'hasta'
+let _calYear = 2025, _calMonth = 9;  // Oct 2025 (0-indexed)
+let _selDesde = null, _selHasta = null;
+let _calFechasSet = new Set();  // set de fechas con datos
+
+const DIAS_HDR = ['D','L','M','X','J','V','S'];
+const MESES_CAL = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+                   'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+function getFechaDesde(){ return _selDesde; }
+function getFechaHasta(){ return _selHasta; }
+function hayRango(){ return _selDesde && _selHasta; }
+function hayFiltroFecha(){ return _selDesde || _selHasta; }
+
+// Inicializa el set de fechas disponibles
+function initCalFechas(){
+  _calFechasSet = new Set(DATA_RAW ? DATA_RAW.fechas : []);
+  // Posicionar calendario en primera fecha disponible
+  if(DATA_RAW && DATA_RAW.fechas && DATA_RAW.fechas.length){
+    const first = DATA_RAW.fechas[0];
+    _calYear  = parseInt(first.slice(0,4));
+    _calMonth = parseInt(first.slice(5,7)) - 1;
+  }
+}
+
+function toggleCal(mode){
+  const popup = document.getElementById('cal-popup');
+  const isOpen = popup.style.display !== 'none';
+  if(isOpen && _calMode === mode){ closeCal(); return; }
+  _calMode = mode;
+  // Highlight active input
+  document.getElementById('f-fecha-desde').classList.toggle('active', mode==='desde');
+  document.getElementById('f-fecha-hasta').classList.toggle('active', mode==='hasta');
+  // Posicionar popup debajo del input correcto
+  const anchor = document.getElementById(mode==='desde'?'f-fecha-desde':'f-fecha-hasta');
+  const lbl = document.getElementById('lbl-fecha-rango');
+  popup.style.display = 'block';
+  renderCal();
+  // Close on outside click
+  setTimeout(()=>{ document.addEventListener('click', onOutsideClick, {once:true}); }, 0);
+}
+
+function onOutsideClick(e){
+  const popup = document.getElementById('cal-popup');
+  if(popup && !popup.contains(e.target) &&
+     e.target.id !== 'f-fecha-desde' && e.target.id !== 'f-fecha-hasta'){
+    closeCal();
+  }
+}
+
+function closeCal(){
+  const popup = document.getElementById('cal-popup');
+  if(popup) popup.style.display = 'none';
+  ['f-fecha-desde','f-fecha-hasta'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.classList.remove('active');
+  });
+}
+
+function calNav(dir){
+  _calMonth += dir;
+  if(_calMonth > 11){ _calMonth = 0; _calYear++; }
+  if(_calMonth < 0) { _calMonth = 11; _calYear--; }
+  renderCal();
+}
+
+function renderCal(){
+  const titulo = document.getElementById('cal-titulo');
+  const grid   = document.getElementById('cal-grid');
+  if(!titulo || !grid) return;
+
+  titulo.textContent = MESES_CAL[_calMonth] + ' ' + _calYear;
+
+  const firstDay = new Date(_calYear, _calMonth, 1).getDay(); // 0=Dom
+  const daysInMonth = new Date(_calYear, _calMonth+1, 0).getDate();
+
+  let cells = '';
+  // Cabecera días
+  DIAS_HDR.forEach(d => {
+    cells += `<div style="font-weight:600;color:#7a9a97;padding:3px 0;font-size:10px;">${d}</div>`;
+  });
+  // Celdas vacías al inicio
+  for(let i=0; i<firstDay; i++){
+    cells += '<div></div>';
+  }
+  // Días del mes
+  for(let d=1; d<=daysInMonth; d++){
+    const fecha = _calYear+'-'+String(_calMonth+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    const hasDatos = _calFechasSet.has(fecha);
+    const isDesde  = fecha === _selDesde;
+    const isHasta  = fecha === _selHasta;
+    const inRange  = _selDesde && _selHasta && fecha > _selDesde && fecha < _selHasta;
+    const isHoy    = fecha === new Date().toISOString().slice(0,10);
+
+    let bg='transparent', color=hasDatos?'#1a3330':'#ccc', fw='400', br='8px', border='none';
+    if(isDesde||isHasta){ bg='#2e9e8a'; color='#fff'; fw='700'; br='50%'; }
+    else if(inRange){ bg='#e4f7f2'; color='#1f7a6e'; }
+    if(isHoy && !isDesde && !isHasta){ border='1.5px solid #2e9e8a'; }
+
+    const cursor = hasDatos ? 'pointer' : 'default';
+    const onclick = hasDatos ? `onCalDay('${fecha}')` : '';
+    cells += `<div onclick="${onclick}" style="padding:4px 2px;border-radius:${br};background:${bg};
+      color:${color};font-weight:${fw};cursor:${cursor};border:${border};font-size:11px;
+      transition:background .15s;" onmouseover="${hasDatos&&!isDesde&&!isHasta?`this.style.background='#d4f5ec'`:''}"
+      onmouseout="${hasDatos&&!isDesde&&!isHasta?`this.style.background='${inRange?'#e4f7f2':'transparent'}'`:''}"
+      title="${hasDatos?fecha:''}">${d}</div>`;
+  }
+  grid.innerHTML = cells;
+
+  // Texto resumen
+  const txt = document.getElementById('cal-rango-txt');
+  const btn = document.getElementById('btn-aplicar-cal');
+  if(_selDesde && _selHasta){
+    const dias = Math.round((new Date(_selHasta)-new Date(_selDesde))/86400000)+1;
+    txt.textContent = _selDesde + ' → ' + _selHasta + ' (' + dias + ' días)';
+    btn.style.display = 'inline-block';
+  } else if(_selDesde){
+    txt.textContent = 'Desde: ' + _selDesde + ' · Selecciona "Hasta"';
+    btn.style.display = 'none';
+  } else {
+    txt.textContent = 'Selecciona fecha de inicio';
+    btn.style.display = 'none';
+  }
+}
+
+function onCalDay(fecha){
+  if(_calMode === 'desde'){
+    _selDesde = fecha;
+    // Si hasta < desde, resetear hasta
+    if(_selHasta && _selHasta < _selDesde){ _selHasta = null; }
+    _calMode = 'hasta';
+  } else {
+    if(fecha < _selDesde){
+      // Si seleccionan antes del inicio, invertir
+      _selHasta = _selDesde;
+      _selDesde = fecha;
+    } else {
+      _selHasta = fecha;
+    }
+  }
+  actualizarInputsFecha();
+  renderCal();
+}
+
+function actualizarInputsFecha(){
+  const inpD = document.getElementById('f-fecha-desde');
+  const inpH = document.getElementById('f-fecha-hasta');
+  const btnC = document.getElementById('btn-clear-fecha');
+  if(inpD) inpD.value = _selDesde ? fmtFechaCorta(_selDesde) : '';
+  if(inpH) inpH.value = _selHasta ? fmtFechaCorta(_selHasta) : '';
+  if(btnC) btnC.style.display = (_selDesde||_selHasta) ? 'inline-block' : 'none';
+}
+
+function fmtFechaCorta(f){
+  if(!f) return '';
+  const MN=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const [y,m,d]=f.split('-');
+  return d+' '+MN[parseInt(m)-1]+' '+y;
+}
+
+function aplicarRango(){
+  if(!_selDesde) return;
+  if(!_selHasta) _selHasta = _selDesde; // rango de un día
+  closeCal();
+  // Sincronizar filtro de mes: si rango es en un solo mes, seleccionar ese mes
+  const fMes = document.getElementById('f-mes');
+  if(fMes){
+    const mD=_selDesde.slice(0,7), mH=_selHasta.slice(0,7);
+    fMes.value = (mD===mH) ? mD : 'Todos';
+  }
+  _miniCubeDate = null; _miniCube = null; // invalidar cache
+  render();
+  actualizarBannerFecha();
+}
+
+function clearFecha(){
+  _selDesde = null; _selHasta = null;
+  actualizarInputsFecha();
+  actualizarBannerFecha();
+  _miniCubeDate = null; _miniCube = null;
+  closeCal();
+  render();
+}
+
+function actualizarBannerFecha(){
+  // Actualizar mes-nota con el rango activo
+  const el = document.getElementById('mes-nota');
+  if(!el) return;
+  if(_selDesde && _selHasta){
+    if(_selDesde===_selHasta){
+      el.textContent = '📅 ' + fmtFechaCorta(_selDesde);
+    } else {
+      el.textContent = '📅 ' + fmtFechaCorta(_selDesde) + ' → ' + fmtFechaCorta(_selHasta);
+    }
+    el.style.color = '#2e9e8a';
+  } else {
+    el.textContent = '(histórico completo)';
+    el.style.color = '#7a9a97';
+  }
+}
+
+// poblarFechas ya no rellena un select sino que actualiza el set
+function poblarFechas(fechas){
+  _calFechasSet = new Set(fechas||[]);
+  if(fechas && fechas.length){
+    _calYear  = parseInt(fechas[0].slice(0,4));
+    _calMonth = parseInt(fechas[0].slice(5,7))-1;
+  }
+}
+
+// getFecha sigue siendo usada internamente, ahora devuelve estado de rango
+function getFecha(){
+  // Retorna 'Todas' si no hay rango, 'RANGE' si lo hay
+  return hayFiltroFecha() ? 'RANGE' : 'Todas';
+}
+
+function onFechaChange(){ render(); } // compat - ya no se usa directamente
+
+
+// ── Computar mini-CUBE para una fecha específica ──────────────────────────────
+function computeMiniCube(desde, hasta){
+  if(!DATA_RAW || !DATA_RAW.rows) return null;
+  const {fechas,estados,meses,cats,franjas,docs,nombres,rows}=DATA_RAW;
+  // Soporte para fecha única o rango
+  const hastaR = hasta || desde;
+  const feDesde=fechas.indexOf(desde), feHasta=fechas.indexOf(hastaR);
+  if(feDesde===-1) return null;
+  const feHastaIdx = feHasta===-1 ? feDesde : feHasta;
+
+  // Filtrar filas del rango
+  const sub=rows.filter(r=>r[0]>=feDesde && r[0]<=feHastaIdx);
+  if(!sub.length) return null;
+
+  // Acumuladores por (estado|cat|franja) - mes siempre será el mismo
+  const cube={};
+  function gc(k){ if(!cube[k])cube[k]={n:0,m:0,docs:new Set(),outs:0,hm:{},mm:{},by_cat:{},by_franja:{},top:{}}; return cube[k]; }
+
+  // Calcular límite IQR de la fecha
+  const vals=sub.map(r=>r[6]).sort((a,b)=>a-b);
+  const q1v=vals[Math.floor(vals.length*.25)]||0, q3v=vals[Math.floor(vals.length*.75)]||0;
+  const limIQR=q3v+1.5*(q3v-q1v), limReg=10000000;
+
+  // Precompute day-of-week for each unique fecha index in sub
+  const feDiaMap={};
+  sub.forEach(r=>{
+    const fi=r[0];
+    if(!(fi in feDiaMap)){
+      const f=fechas[fi]; // 'YYYY-MM-DD'
+      const d=new Date(f+'T12:00:00');
+      const dn=d.getDay(); // 0=Dom,1=Lun,...,6=Sáb
+      feDiaMap[fi]={dn, label:['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'][dn], cat_fecha:''};
+    }
+  });
+
+  sub.forEach(r=>{
+    const [feI,eI,mI,cI,frI,hora,valor,dI,nI]=r;
+    const estado=estados[eI], mes=meses[mI], cat=cats[cI], fr=franjas[frI];
+    const doc=docs[dI], nombre=nombres[nI];
+    const isOut=valor>limIQR||valor>=limReg;
+    const ks=[['Todos',estado],['Todos','Todos']];
+    const kc=[['Todos',cat],['Todos','Todos']];
+    const kf=[['Todos',fr],['Todos','Todos']];
+    const dInfo=feDiaMap[feI]||{dn:0,label:'Domingo'};
+    const isHab=cat==='Día hábil', isFin=cat==='Fin de semana', isFest=cat==='Festivo';
+
+    for(const [,eb] of ks) for(const [,cb] of kc) for(const [,fb] of kf){
+      const key=`${eb}|Todos|${cb}|${fb}`;
+      const cell=gc(key);
+      cell.n++; cell.m+=valor; cell.docs.add(doc); if(isOut)cell.outs++;
+      cell.hm[hora]=(cell.hm[hora]||{n:0,m:0}); cell.hm[hora].n++;cell.hm[hora].m+=valor;
+      cell.mm[mes]=(cell.mm[mes]||{n:0,m:0}); cell.mm[mes].n++;cell.mm[mes].m+=valor;
+      if(!cell.by_cat[cat])cell.by_cat[cat]={n:0,m:0}; cell.by_cat[cat].n++;cell.by_cat[cat].m+=valor;
+      if(!cell.by_franja[fr])cell.by_franja[fr]={n:0,m:0}; cell.by_franja[fr].n++;cell.by_franja[fr].m+=valor;
+      if(!cell.top[doc])cell.top[doc]={d:doc,n:nombre,ops:0,m:0};cell.top[doc].ops++;cell.top[doc].m+=valor;
+      // Acumuladores día semana
+      if(isHab){
+        if(!cell.hab)cell.hab={};
+        const dl=dInfo.label;
+        if(!cell.hab[dl])cell.hab[dl]={n:0,m:0,docs:new Set()};
+        cell.hab[dl].n++;cell.hab[dl].m+=valor;cell.hab[dl].docs.add(doc);
+      } else if(isFin){
+        if(!cell.finde)cell.finde={};
+        const dl=dInfo.label;
+        if(!cell.finde[dl])cell.finde[dl]={n:0,m:0,docs:new Set()};
+        cell.finde[dl].n++;cell.finde[dl].m+=valor;cell.finde[dl].docs.add(doc);
+      } else if(isFest){
+        if(!cell.fest)cell.fest={};
+        const fStr=fechas[feI];
+        const MN=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+        const [fy,fm,fd]=fStr.split('-');
+        const lbl=fd+' '+MN[parseInt(fm)-1];
+        if(!cell.fest[fStr])cell.fest[fStr]={d:lbl,n:0,m:0,docs:new Set()};
+        cell.fest[fStr].n++;cell.fest[fStr].m+=valor;cell.fest[fStr].docs.add(doc);
+      }
+    }
+  });
+
+  // Convertir a formato CUBE
+  const result={};
+  for(const [k,c] of Object.entries(cube)){
+    const [eK,mK,cK,fK]=k.split('|');
+    // Calc mes (all same)
+    const by_mes=Object.entries(c.mm||{}).map(([m,v])=>({m,n:v.n,v:v.m})).sort((a,b)=>a.m.localeCompare(b.m));
+    const by_hora=Object.entries(c.hm).map(([h,v])=>({h:parseInt(h),n:v.n,m:v.m})).sort((a,b)=>a.h-b.h);
+    const by_cat=Object.entries(c.by_cat).map(([cc,v])=>({c:cc,n:v.n,v:v.m}));
+    const by_franja=Object.entries(c.by_franja).map(([f,v])=>({f,n:v.n,v:v.m}));
+    const top_docs=Object.values(c.top).sort((a,b)=>b.m-a.m).slice(0,5).map(t=>({d:t.d,n:t.n,ops:t.ops,m:t.m}));
+    // Build hab/finde/fest from accumulators
+    const HABS=['Lunes','Martes','Miércoles','Jueves','Viernes'];
+    const FINS=['Sábado','Domingo'];
+    const hab=HABS.map(d=>{ const v=(c.hab&&c.hab[d])||{n:0,m:0,docs:new Set()};
+      return {d,n:v.n,m:v.m,docs:v.docs instanceof Set?v.docs.size:v.docs}; });
+    const finde=FINS.map(d=>{ const v=(c.finde&&c.finde[d])||{n:0,m:0,docs:new Set()};
+      return {d,n:v.n,m:v.m,docs:v.docs instanceof Set?v.docs.size:v.docs}; });
+    const festivo=Object.values(c.fest||{}).sort((a,b)=>a.d.localeCompare(b.d))
+      .map(v=>({d:v.d,n:v.n,m:v.m,docs:v.docs instanceof Set?v.docs.size:v.docs}));
+    result[k]={
+      kpis:{n_ops:c.n,monto_total:c.m,monto_prom:c.n?Math.round(c.m/c.n):0,docs:c.docs.size,outliers:c.outs},
+      by_hora,by_mes,by_cat,by_franja,top_docs,
+      _dia:{hab,finde,festivo}
+    };
+  }
+  return result;
+}
+
+// Cache del mini-CUBE para no recalcular en cada render
+let _miniCubeDate=null, _miniCube=null;
+function getMiniCube(desde, hasta){
+  const key=(desde||'')+'|'+(hasta||'');
+  if(key===_miniCubeDate) return _miniCube;
+  _miniCubeDate=key;
+  _miniCube=computeMiniCube(desde, hasta);
+  return _miniCube;
+}
+
+// ── Poblar select de fechas ───────────────────────────────────────────────────
+function poblarFechas(fechas){
+  const sel=document.getElementById('f-fecha');
+  if(!sel) return;
+  sel.innerHTML='<option value="Todas">Todas las fechas</option>';
+  const mesNom={'01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun',
+                 '07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'};
+  const DIAS=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+  fechas.forEach(f=>{
+    const d=new Date(f+'T12:00:00');
+    const dia=DIAS[d.getDay()];
+    const [y,mo,dd]=f.split('-');
+    const label=`${dd} ${mesNom[mo]} ${y} (${dia})`;
+    sel.innerHTML+=`<option value="${f}">${label}</option>`;
+  });
+}
+
+function getEstado(){ return document.getElementById('f-estado').value; }
+function getMes(){    return document.getElementById('f-mes').value; }
+function getCat(){    return document.getElementById('f-cat').value; }
+function getFranja(){ return document.getElementById('f-franja').value; }
+function getCubeKey(){
+  if(hayFiltroFecha()) return getEstado()+'|Todos|'+getCat()+'|'+getFranja();
+  return getEstado()+'|'+getMes()+'|'+getCat()+'|'+getFranja();
+}
+function getCubeData(){
+  if(hayFiltroFecha()){
+    const mc=getMiniCube(getFechaDesde(), getFechaHasta());
+    if(mc){
+      const key=getCubeKey();
+      return mc[key]||mc['Todos|Todos|Todos|Todos']||null;
+    }
+  }
+  const key=getCubeKey();
+  return CUBE[key]||null;
+}
+
+function filterSug(){
+  selectedAsoc=null;updateBanner();
+  const q=document.getElementById('f-asoc').value.trim().toLowerCase();
+  const sl=document.getElementById('sug-list');
+  if(!q){sl.innerHTML='';sl.classList.remove('open');return;}
+  const hits=NOMBRES.filter(n=>n.toLowerCase().includes(q)).slice(0,12);
+  sl.innerHTML=hits.length?hits.map(n=>`<div class="sug-item" onmousedown="selectAsoc('${n.replace(/'/g,"&#39;")}')">${n}</div>`).join(''):'<div class="sug-item" style="color:#aaa;cursor:default;">Sin resultados</div>';
+  sl.classList.add('open');
+}
+function showSug(){if(document.getElementById('f-asoc').value.trim())filterSug();}
+function hideSugDelay(){setTimeout(()=>document.getElementById('sug-list').classList.remove('open'),200);}
+function selectAsoc(name){selectedAsoc=name;document.getElementById('f-asoc').value=name;document.getElementById('sug-list').classList.remove('open');updateBanner();render();}
+function clearAsoc(){selectedAsoc=null;document.getElementById('f-asoc').value='';document.getElementById('sug-list').classList.remove('open');updateBanner();render();}
+function updateBanner(){
+  const b=document.getElementById('asoc-banner'),t=document.getElementById('asoc-banner-txt');
+  if(selectedAsoc&&DOCMAP[selectedAsoc]){const d=DOCMAP[selectedAsoc];b.classList.add('show');t.innerHTML=`<strong>${selectedAsoc}</strong> &nbsp;|&nbsp; Doc: ${d.doc} &nbsp;|&nbsp; ${d.n} ops &nbsp;|&nbsp; Monto: <strong>${fmtCOP(d.m)}</strong>`;}
+  else b.classList.remove('show');
+}
+function actualizarUITrasRecarga(datos, meses){
+  // ── Actualizar select de meses ────────────────────────────────────────────
+  const mesNombres = {
+    '01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun',
+    '07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'
+  };
+  const sel = document.getElementById('f-mes');
+  if(sel){
+    // Conservar solo la opción "Todos"
+    sel.innerHTML = '<option value="Todos">Todos los meses</option>';
+    meses.forEach(m => {
+      const [y, mo] = m.split('-');
+      const label = mesNombres[mo] + ' ' + y;
+      sel.innerHTML += `<option value="${m}">${label}</option>`;
+    });
+  }
+
+  // ── Reinicializar calendario tras recarga ─────────────────────────────────
+  const fechasUniq=[...new Set(datos.map(r=>r.fecha instanceof Date?r.fecha.toISOString().slice(0,10):String(r.fecha).slice(0,10)))].filter(Boolean).sort();
+  if(typeof DATA_RAW !== 'undefined') DATA_RAW.fechas = fechasUniq;
+  poblarFechas(fechasUniq);
+  _selDesde=null; _selHasta=null; actualizarInputsFecha(); actualizarBannerFecha();
+  _miniCubeDate=null; _miniCube=null;
+
+  // ── Actualizar header ─────────────────────────────────────────────────────
+  const fechas = datos.map(r=>r.fecha).sort((a,b)=>a-b);
+  const fi = fechas[0], ff = fechas[fechas.length-1];
+  const fmtFecha = d => d.getDate().toString().padStart(2,'0') + ' ' +
+    ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()] +
+    ' ' + d.getFullYear();
+  const fmtPeriodo = d => {
+    const mes = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][d.getMonth()];
+    return mes + ' ' + d.getFullYear();
+  };
+  const periodo = fmtPeriodo(fi) + ' – ' + fmtPeriodo(ff);
+
+  const elPeriodo = document.getElementById('hdr-periodo');
+  const elOps     = document.getElementById('hdr-ops');
+  const elAsocs   = document.getElementById('hdr-asocs');
+  if(elPeriodo) elPeriodo.textContent = periodo;
+  if(elOps)     elOps.textContent = datos.length.toLocaleString('es-CO') + ' operaciones';
+  if(elAsocs)   elAsocs.textContent = new Set(datos.map(r=>r.doc)).size.toLocaleString('es-CO') + ' asociados';
+
+  // ── Actualizar footer ─────────────────────────────────────────────────────
+  const elFt = document.getElementById('footer-periodo');
+  if(elFt) elFt.textContent =
+    'Período: ' + fmtFecha(fi) + ' – ' + fmtFecha(ff) +
+    '  ·  ' + datos.length.toLocaleString('es-CO') + ' ops  ·  BRE-B.xlsx';
+}
+
+function resetFilters(){
+  ['f-mes','f-cat','f-franja','f-estado'].forEach(id=>document.getElementById(id).value='Todos');
+  _selDesde=null; _selHasta=null; actualizarInputsFecha(); actualizarBannerFecha(); _miniCubeDate=null; _miniCube=null;
+  clearAsoc();
+}
+
+
+// ── Render principal ─────────────────────────────────────────────────────────
+function render(){
+  if(selectedAsoc&&DOCMAP[selectedAsoc]) renderAsoc(selectedAsoc);
+  else renderCube();
+}
+
+function renderCube(){
+  const fecha=getFecha();
+  const d=getCubeData();
+  if(!d) return;
+  const key=getCubeKey();
+  const k=d.kpis;
+  document.getElementById('k-ops').textContent=k.n_ops.toLocaleString('es-CO');
+  document.getElementById('k-monto').textContent=fmtM(k.monto_total);
+  document.getElementById('k-prom').textContent='Prom. '+fmtCOP(k.monto_prom);
+  document.getElementById('k-docs').textContent=k.docs.toLocaleString('es-CO');
+  document.getElementById('k-out').textContent=k.outliers.toLocaleString('es-CO');
+  document.getElementById('k-outpct').textContent=pct(k.outliers,k.n_ops)+'  |  IQR+Perfil+Reg.';
+
+
+  // Gráficas
+  actualizarBannerFecha();
+  // Grafico mes: histórico COMPLETO — respeta estado/cat/franja/rango pero NO el filtro de mes
+  // Para eso usamos la clave con mes='Todos' siempre
+  const _keyMes = getEstado()+'|Todos|'+getCat()+'|'+getFranja();
+  let _dataMes;
+  if(hayFiltroFecha()){
+    // Con rango activo: usar miniCube con clave mes=Todos para ver todos los meses del rango
+    const _mc = getMiniCube(getFechaDesde(), getFechaHasta());
+    _dataMes = (_mc && (_mc[_keyMes] || _mc['Todos|Todos|Todos|Todos']));
+  } else {
+    _dataMes = CUBE[_keyMes] || CUBE['Todos|Todos|Todos|Todos'];
+  }
+  buildMesChart(_dataMes ? _dataMes.by_mes : []);
+  buildHoraChart(d.by_hora);
+  buildDiaChart();
+  buildFindeChart();
+  buildFestivoChart();
+  buildBarsCat(d.by_cat,k.n_ops);
+  buildBarsFranja(d.by_franja,k.n_ops);
+  buildTopDocs(d.top_docs);
+  if(isOutPanelOpen()) buildOutPanel();
+}
+
+function renderAsoc(nombre){
+  const d=DOCMAP[nombre]; if(!d) return;
+  document.getElementById('k-ops').textContent=d.n.toLocaleString('es-CO');
+  document.getElementById('k-monto').textContent=fmtM(d.m);
+  document.getElementById('k-prom').textContent='Prom. '+fmtCOP(d.p);
+  document.getElementById('k-docs').textContent='1';
+  document.getElementById('k-out').textContent=d.o.toLocaleString('es-CO');
+  document.getElementById('k-outpct').textContent=pct(d.o,d.n)+' del total';
+  document.getElementById('mes-nota').textContent='(filtrado por asociado)';
+  document.getElementById('mes-nota').style.color='#2e9e8a';
+  buildMesChart(d.bm.map(r=>({m:r[0],n:r[1],v:r[2]})));
+  buildHoraChart(Object.entries(d.bh).map(([h,n])=>({h:parseInt(h),n,m:0})));
+  buildDiaChart();
+  buildFindeChart();
+  buildFestivoChart();
+  buildBarsCat(Object.entries(d.bc).map(([c,n])=>({c,n})),d.n);
+  buildBarsFranja(Object.entries(d.bf).map(([f,n])=>({f,n})),d.n);
+  document.getElementById('top-docs').innerHTML='<div style="font-size:12px;color:#7a9a97;padding:8px 0;">Vista individual del asociado</div>';
+  if(isOutPanelOpen()) buildOutPanel();
+}
+
+// ── Gráficas ─────────────────────────────────────────────────────────────────
+const mesOrder=['2025-10','2025-11','2025-12','2026-01','2026-02','2026-03','2026-04','2026-05','2026-06'];
+const mesLabel={'2025-10':'Oct-25','2025-11':'Nov-25','2025-12':'Dic-25','2026-01':'Ene-26','2026-02':'Feb-26','2026-03':'Mar-26','2026-04':'Abr-26','2026-05':'May-26','2026-06':'Jun-26'};
+
+function buildMesChart(by_mes){
+  const md={};by_mes.forEach(r=>md[r.m]={n:r.n,v:r.v});
+  const lbs=[],ops=[],montos=[];
+  mesOrder.forEach(m=>{if(md[m]){lbs.push(mesLabel[m]);ops.push(md[m].n);montos.push(Math.round(md[m].v/1e6));}});
+  if(chartMes) chartMes.destroy();
+  chartMes=new Chart(document.getElementById('cMes'),{
+    type:'bar',
+    data:{labels:lbs,datasets:[
+      {type:'bar',data:ops,backgroundColor:'#2e9e8a',borderRadius:4,yAxisID:'y',label:'N° ops'},
+      {type:'line',data:montos,borderColor:'#1f7a6e',backgroundColor:'rgba(31,122,110,0.08)',borderWidth:2,borderDash:[5,4],pointRadius:4,pointBackgroundColor:'#1f7a6e',tension:0.3,yAxisID:'y2',label:'Monto M$'}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.datasetIndex===0?c.raw.toLocaleString('es-CO')+' ops':'$'+c.raw+'M'}}},
+      scales:{y:{grid:{color:'rgba(0,0,0,0.05)'},ticks:{font:{family:'Poppins',size:10},color:'#7a9a97',callback:v=>v.toLocaleString()}},
+              y2:{position:'right',grid:{display:false},ticks:{font:{family:'Poppins',size:10},color:'#1f7a6e',callback:v=>'$'+v+'M'}}}}
+  });
+}
+
+function buildHoraChart(by_hora){
+  const hm={};by_hora.forEach(r=>hm[r.h]=r.n);
+  const lbs=[],dat=[],cols=[];
+  for(let i=0;i<24;i++){lbs.push(i+'h');dat.push(hm[i]||0);cols.push(i<6?'#98e4de':i<12?'#2e9e8a':i<18?'#1f7a6e':'#5bbcb0');}
+  if(chartHora) chartHora.destroy();
+  chartHora=new Chart(document.getElementById('cHora'),{
+    type:'bar',data:{labels:lbs,datasets:[{data:dat,backgroundColor:cols,borderRadius:3}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'Hora '+c.label+': '+c.raw+' ops'}}},
+      scales:{x:{grid:{display:false},ticks:{font:{family:'Poppins',size:9},color:'#7a9a97',maxRotation:0,autoSkip:true,maxTicksLimit:12}},
+              y:{grid:{color:'rgba(0,0,0,0.04)'},ticks:{font:{family:'Poppins',size:10},color:'#7a9a97'}}}}
+  });
+}
+
+function getDiaData(){
+  if(hayFiltroFecha()){
+    // Con rango activo: usar _dia del miniCube (calculado desde DATA_RAW para ese rango)
+    const mc=getMiniCube(getFechaDesde(), getFechaHasta());
+    if(mc){
+      const key=getCubeKey();
+      const cell=mc[key]||mc['Todos|Todos|Todos|Todos'];
+      if(cell && cell._dia) return cell._dia;
+    }
+    return {hab:[],finde:[],festivo:[]};
+  }
+  if(selectedAsoc && ASOC_DIA[selectedAsoc]){
+    return ASOC_DIA[selectedAsoc];
+  }
+  const key = getCubeKey();
+  return DIA_CUBE[key] || DIA_CUBE['Todos|Todos|Todos|Todos'];
+}
+
+function buildDiaChart(){
+  const d   = getDiaData();
+  const raw = (d && d.hab) ? d.hab : [];
+  const dias=['Lunes','Martes','Miércoles','Jueves','Viernes'];
+  const ops=raw.map(r=>r.n||0), montos=raw.map(r=>Math.round((r.m||0)/1e6)), docs=raw.map(r=>r.docs||0);
+  // Nota dinámica en el subtítulo
+  const notaEl=document.getElementById('dia-nota');
+  if(notaEl){
+    const p=[];
+    if(selectedAsoc) p.push('👤 '+selectedAsoc.split(' ').slice(0,2).join(' '));
+    if(hayFiltroFecha()) p.push('📅 '+fmtFechaCorta(getFechaDesde())+(getFechaHasta()&&getFechaHasta()!==getFechaDesde()?' → '+fmtFechaCorta(getFechaHasta()):''));
+    else if(getMes()!=='Todos') p.push(getMes());
+    if(getEstado()!=='Todos') p.push(getEstado());
+    if(getFranja()!=='Todos') p.push(getFranja());
+    notaEl.textContent = p.length ? '(Lun–Vie · '+p.join(' · ')+')' : '(Lun–Vie · días hábiles)';
+  }
+  if(chartDia) chartDia.destroy();
+  chartDia=new Chart(document.getElementById('cDia'),{
+    type:'bar',
+    data:{labels:dias,datasets:[
+      {type:'bar', data:ops,    backgroundColor:'#2e9e8a',borderRadius:5,yAxisID:'y',  order:2},
+      {type:'line',data:montos, borderColor:'#1f7a6e',backgroundColor:'rgba(31,122,110,0.08)',
+       borderWidth:2.5,borderDash:[6,3],pointRadius:5,pointBackgroundColor:'#1f7a6e',tension:0.3,yAxisID:'y2',order:1},
+      {type:'line',data:docs,   borderColor:'#5bbcb0',backgroundColor:'transparent',
+       borderWidth:2,pointRadius:4,pointBackgroundColor:'#5bbcb0',tension:0.3,yAxisID:'y3',order:0}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>{
+        if(c.datasetIndex===0) return 'Operaciones: '+c.raw.toLocaleString('es-CO');
+        if(c.datasetIndex===1) return 'Monto: $'+c.raw+'M';
+        return 'Docs únicos: '+c.raw;
+      }}}},
+      scales:{
+        x:{grid:{display:false},ticks:{font:{family:'Poppins',size:11,weight:'500'},color:'#1a3330'}},
+        y:{position:'left', grid:{color:'rgba(0,0,0,0.04)'},ticks:{font:{family:'Poppins',size:10},color:'#7a9a97',callback:v=>v.toLocaleString()}},
+        y2:{position:'right',grid:{display:false},ticks:{font:{family:'Poppins',size:10},color:'#1f7a6e',callback:v=>'$'+v+'M'}},
+        y3:{display:false}}}
+  });
+}
+
+function buildFindeChart(){
+  const d   = getDiaData();
+  const raw = (d && d.finde) ? d.finde : [];
+  const dias=['Sábado','Domingo'];
+  const ops=raw.map(r=>r.n||0), montos=raw.map(r=>Math.round((r.m||0)/1e6)), docs=raw.map(r=>r.docs||0);
+  if(chartFinde) chartFinde.destroy();
+  chartFinde=new Chart(document.getElementById('cFinde'),{
+    type:'bar',
+    data:{labels:dias,datasets:[
+      {type:'bar', data:ops,    backgroundColor:'#5bbcb0',borderRadius:8,yAxisID:'y',  order:2},
+      {type:'line',data:montos, borderColor:'#1f7a6e',backgroundColor:'rgba(31,122,110,0.08)',
+       borderWidth:2.5,borderDash:[6,3],pointRadius:6,pointBackgroundColor:'#1f7a6e',tension:0.3,yAxisID:'y2',order:1},
+      {type:'line',data:docs,   borderColor:'#7dd4cc',backgroundColor:'transparent',
+       borderWidth:2,pointRadius:5,pointBackgroundColor:'#7dd4cc',tension:0.3,yAxisID:'y3',order:0}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>{
+        if(c.datasetIndex===0) return 'Operaciones: '+c.raw.toLocaleString('es-CO');
+        if(c.datasetIndex===1) return 'Monto: $'+c.raw+'M';
+        return 'Docs únicos: '+c.raw;
+      }}}},
+      scales:{
+        x:{grid:{display:false},ticks:{font:{family:'Poppins',size:12,weight:'600'},color:'#1a3330'}},
+        y:{position:'left', grid:{color:'rgba(0,0,0,0.04)'},ticks:{font:{family:'Poppins',size:10},color:'#7a9a97',callback:v=>v.toLocaleString()}},
+        y2:{position:'right',grid:{display:false},ticks:{font:{family:'Poppins',size:10},color:'#1f7a6e',callback:v=>'$'+v+'M'}},
+        y3:{display:false}}}
+  });
+}
+
+function buildFestivoChart(){
+  const d   = getDiaData();
+  const raw = (d && d.festivo) ? d.festivo : [];
+  const lbs=raw.map(r=>r.d), ops=raw.map(r=>r.n||0),
+        montos=raw.map(r=>Math.round((r.m||0)/1e6)), docs=raw.map(r=>r.docs||0);
+  if(chartFestivo) chartFestivo.destroy();
+  if(!lbs.length){
+    const ctx=document.getElementById('cFestivo');
+    if(ctx){const c2=ctx.getContext('2d');c2.clearRect(0,0,ctx.width,ctx.height);
+      c2.font='13px Poppins';c2.fillStyle='#7a9a97';c2.textAlign='center';
+      c2.fillText('Sin festivos en este subconjunto',ctx.width/2,ctx.height/2);}
+    return;
+  }
+  chartFestivo=new Chart(document.getElementById('cFestivo'),{
+    type:'bar',
+    data:{labels:lbs,datasets:[
+      {type:'bar', data:ops,    backgroundColor:'#f0c85a',borderRadius:5,yAxisID:'y',  order:2},
+      {type:'line',data:montos, borderColor:'#d4a820',backgroundColor:'rgba(212,160,23,0.08)',
+       borderWidth:2.5,borderDash:[6,3],pointRadius:5,pointBackgroundColor:'#d4a820',tension:0.3,yAxisID:'y2',order:1},
+      {type:'line',data:docs,   borderColor:'#f0c85a',backgroundColor:'transparent',
+       borderWidth:2,pointRadius:4,pointBackgroundColor:'#f0c85a',tension:0.3,yAxisID:'y3',order:0}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>{
+        if(c.datasetIndex===0) return 'Operaciones: '+c.raw.toLocaleString('es-CO');
+        if(c.datasetIndex===1) return 'Monto: $'+c.raw+'M';
+        return 'Docs únicos: '+c.raw;
+      }}}},
+      scales:{
+        x:{grid:{display:false},ticks:{font:{family:'Poppins',size:10},color:'#1a3330',maxRotation:40}},
+        y:{position:'left', grid:{color:'rgba(0,0,0,0.04)'},ticks:{font:{family:'Poppins',size:10},color:'#7a9a97',callback:v=>v.toLocaleString()}},
+        y2:{position:'right',grid:{display:false},ticks:{font:{family:'Poppins',size:10},color:'#d4a820',callback:v=>'$'+v+'M'}},
+        y3:{display:false}}}
+  });
+}
+
+function buildBarsCat(by_cat,total){
+  const cc={'Día hábil':'#2e9e8a','Fin de semana':'#5bbcb0','Festivo':'#7dd4cc'};
+  const cm={};by_cat.forEach(r=>cm[r.c||r.cat]=r.n);
+  let h='';
+  ['Día hábil','Fin de semana','Festivo'].forEach(c=>{
+    const n=cm[c]||0,p=total>0?Math.round(n/total*100):0;
+    h+=`<div class="bar-row"><div class="bar-label">${c}</div><div class="bar-track"><div class="bar-fill" style="width:${p}%;background:${cc[c]};">${p>8?p+'%':''}</div></div><div class="bar-n">${n.toLocaleString('es-CO')}</div></div>`;
+  });
+  document.getElementById('bars-cat').innerHTML=h;
+}
+
+function buildBarsFranja(by_fr,total){
+  const fc={'Madrugada':'#7dd4cc','Mañana':'#2e9e8a','Tarde':'#1f7a6e','Noche':'#5bbcb0'};
+  const fm={};by_fr.forEach(r=>fm[r.f||r.fr]=r.n);
+  let h='';
+  ['Tarde','Mañana','Noche','Madrugada'].forEach(f=>{
+    const n=fm[f]||0,p=total>0?Math.round(n/total*100):0;
+    h+=`<div class="bar-row"><div class="bar-label">${f}</div><div class="bar-track"><div class="bar-fill" style="width:${p}%;background:${fc[f]};">${p>8?p+'%':''}</div></div><div class="bar-n">${n.toLocaleString('es-CO')}</div></div>`;
+  });
+  document.getElementById('bars-franja').innerHTML=h;
+}
+
+function buildTopDocs(top_docs){
+  let h='';
+  top_docs.forEach(r=>{
+    const badge=r.ops>30?'br':r.ops>10?'by':'bg';
+    h+=`<div class="top-row"><span class="top-name">${r.n}</span><span style="font-size:12px;font-weight:500;color:#1a3330;text-align:right;align-self:start;padding-top:2px;">${fmtM(r.m)}</span><span style="text-align:center;align-self:start;padding-top:2px;"><span class="badge ${badge}">${r.ops}</span></span></div>`;
+  });
+  document.getElementById('top-docs').innerHTML=h||'<div style="font-size:12px;color:#7a9a97;padding:8px 0;">Sin datos</div>';
+}
+
+// ── Panel Outliers ───────────────────────────────────────────────────────────
+// OUT_CUBE: fallback al resumen global OUT cuando no hay cube por filtros
+// (el cube detallado se genera en recalcularCubos al cargar nuevo Excel)
+let OUT_CUBE = {'Todos|Todos|Todos|Todos': OUT};
+
+// Reconstruir las distribuciones de OUT desde ASOC_OUT (que tiene datos hasta jun-2026)
+(function() {
+  const gMes = {}, gFr = {}, gMet = {}, gCat = {}, gRng = {};
+  let mt = 0, mx = 0;
+  for (const base of Object.values(ASOC_OUT || {})) {
+    if (!base || base.total === 0) continue;
+    for (const r of (base.by_mes    || [])) gMes[r.m] = (gMes[r.m]||0) + r.n;
+    for (const r of (base.by_franja || [])) gFr[r.f]  = (gFr[r.f] ||0) + r.n;
+    for (const r of (base.by_metodo || [])) gMet[r.m] = (gMet[r.m]||0) + r.n;
+    for (const r of (base.by_cat    || [])) gCat[r.c] = (gCat[r.c]||0) + r.n;
+    for (const r of (base.by_rango  || [])) gRng[r.r] = (gRng[r.r]||0) + r.n;
+    mt += (base.monto_total || 0);
+    if ((base.monto_max || 0) > mx) mx = base.monto_max;
+  }
+  OUT.by_mes    = Object.entries(gMes).sort((a,b)=>a[0].localeCompare(b[0])).map(([m,n])=>({m,n,v:0}));
+  OUT.by_franja = Object.entries(gFr).map(([f,n])=>({f,n,v:0}));
+  OUT.by_metodo = Object.entries(gMet).sort((a,b)=>b[1]-a[1]).map(([m,n])=>({m,n,v:0}));
+  OUT.by_cat    = Object.entries(gCat).map(([c,n])=>({c,n,v:0}));
+  OUT.by_rango  = Object.entries(gRng).map(([r,n])=>({r,n,v:0}));
+  OUT.monto_total = mt;
+  OUT.monto_max   = mx;
+  // Mantener OUT.total sincronizado con la suma real
+  OUT.total = OUT.by_mes.reduce((s,r)=>s+r.n, 0);
+  // Actualizar OUT_CUBE con el OUT reconstruido
+  OUT_CUBE['Todos|Todos|Todos|Todos'] = OUT;
+})();
+
+function getActiveOutData(){
+  // ── Si hay asociado seleccionado: usar ASOC_OUT (datos exactos por asociado) ──
+  if(selectedAsoc && ASOC_OUT[selectedAsoc]){
+    const d = ASOC_OUT[selectedAsoc];
+    return Object.assign({}, d, {_isAsoc: true, _nombre: selectedAsoc});
+  }
+
+  // ── Sin asociado: calcular desde CUBE + ASOC_OUT respetando filtros activos ──
+  const ke = getEstado();
+  const km = getMes();
+  const kc = getCat();
+  const kf = getFranja();
+
+  // Total autoritativo desde CUBE
+  const key = getCubeKey();
+  const cubeEntry = (CUBE && CUBE[key]) ? CUBE[key] : null;
+  const totalDesdeCube = cubeEntry ? (cubeEntry.kpis.outliers || 0) : 0;
+
+  // Sin ningún filtro activo: devolver OUT reconstruido directamente
+  const sinFiltros = (ke === 'Todos' && km === 'Todos' && kc === 'Todos' && kf === 'Todos');
+  if(sinFiltros){
+    // Escalar todas las distribuciones de OUT al totalDesdeCube autoritativo
+    function escalarDist(arr, campo, total){
+      const suma = arr.reduce((s,r)=>s+(r[campo]||0), 0);
+      if(!suma || !total || suma===total) return arr;
+      // Escalar manteniendo enteros, ajustando el mayor residuo
+      let acc = 0;
+      const res = arr.map(r=>{
+        const exact = (r[campo]||0) * total / suma;
+        const floor = Math.floor(exact);
+        acc += exact - floor;
+        return {...r, [campo]: floor, _frac: exact - floor};
+      });
+      // Distribuir los enteros restantes por mayor fracción
+      const diff = total - res.reduce((s,r)=>s+r[campo],0);
+      res.sort((a,b)=>b._frac-a._frac).slice(0,diff).forEach(r=>r[campo]++);
+      res.forEach(r=>delete r._frac);
+      return res;
+    }
+    const byMesE    = escalarDist([...OUT.by_mes],   'n', totalDesdeCube);
+    const byFranjaE = escalarDist([...OUT.by_franja],'n', totalDesdeCube);
+    const byMetodoE = escalarDist([...OUT.by_metodo],'n', totalDesdeCube);
+    const byCatE    = escalarDist([...OUT.by_cat],   'n', totalDesdeCube);
+    const byRangoE  = escalarDist([...OUT.by_rango], 'n', totalDesdeCube);
+
+    // Construir by_doc desde ASOC_OUT
+    const byDocSF = Object.values(ASOC_OUT||{})
+      .filter(b=>b&&b.total>0)
+      .sort((a,b)=>b.monto_total-a.monto_total).slice(0,15)
+      .map(b=>{
+        const bd=b.by_doc&&b.by_doc[0]?b.by_doc[0]:{};
+        return {doc:bd.doc||'—',nombre:bd.nombre||'—',n_ops:b.total,
+                monto_total:b.monto_total,monto_max:b.monto_max,monto_prom:b.monto_prom,
+                metodos:(b.by_metodo||[]).map(r=>r.m).join('+')};
+      });
+    const top20SF = [];
+    for(const base of Object.values(ASOC_OUT||{})){
+      if(!base||!base.top20) continue;
+      for(const op of base.top20) top20SF.push(op);
+    }
+    top20SF.sort((a,b)=>b.v-a.v);
+    return {
+      total: totalDesdeCube || OUT.total,
+      monto_total: OUT.monto_total, monto_max: OUT.monto_max, monto_prom: OUT.monto_prom,
+      by_mes: byMesE, by_franja: byFranjaE, by_metodo: byMetodoE,
+      by_cat: byCatE, by_rango: byRangoE,
+      by_doc: byDocSF, top20: top20SF.slice(0,20)
+    };
+  }
+
+  // Con filtros: agregar desde ASOC_OUT
+  const gMes={}, gFr={}, gMet={}, gCat={}, gRng={};
+  const topAsoc = {};
+  let montoTotal = 0, montoMax = 0;
+  const nFiltrosDim = (km!=='Todos'?1:0)+(kc!=='Todos'?1:0)+(kf!=='Todos'?1:0);
+
+  for(const [nombre, base] of Object.entries(ASOC_OUT||{})){
+    if(!base || base.total===0) continue;
+
+    // Filtro de estado: ASOC_OUT no tiene campo estado, así que si solo hay filtro
+    // de estado usamos todo ASOC_OUT y escalamos por totalDesdeCube al final
+    let asocN = 0, asocMonto = 0;
+
+    if(nFiltrosDim === 0){
+      // Solo filtro de estado (o ninguno): usar totales del asociado
+      asocN = base.total;
+      asocMonto = base.monto_total || 0;
+      for(const r of (base.by_mes    ||[])) gMes[r.m] = (gMes[r.m]||0)+r.n;
+      for(const r of (base.by_franja ||[])) gFr[r.f]  = (gFr[r.f] ||0)+r.n;
+      for(const r of (base.by_metodo ||[])) gMet[r.m] = (gMet[r.m]||0)+r.n;
+      for(const r of (base.by_cat    ||[])) gCat[r.c] = (gCat[r.c]||0)+r.n;
+      for(const r of (base.by_rango  ||[])) gRng[r.r] = (gRng[r.r]||0)+r.n;
+    } else {
+      // Hay filtros dimensionales: usar campo pre-agregado correspondiente
+      let rows = null;
+      if(km!=='Todos')      rows = (base.by_mes   ||[]).filter(r=>r.m===km);
+      else if(kf!=='Todos') rows = (base.by_franja||[]).filter(r=>r.f===kf);
+      else if(kc!=='Todos') rows = (base.by_cat   ||[]).filter(r=>r.c===kc);
+
+      asocN = (rows||[]).reduce((s,r)=>s+r.n, 0);
+      if(asocN === 0) continue;
+      asocMonto = (rows||[]).reduce((s,r)=>s+(r.v||0), 0);
+
+      const ratio = base.total > 0 ? asocN/base.total : 0;
+      if(km!=='Todos') gMes[km]=(gMes[km]||0)+asocN;
+      else for(const r of (base.by_mes||[])){const n=r.n*ratio; if(n>0) gMes[r.m]=(gMes[r.m]||0)+n;}
+      if(kf!=='Todos') gFr[kf]=(gFr[kf]||0)+asocN;
+      else for(const r of (base.by_franja||[])){const n=r.n*ratio; if(n>0) gFr[r.f]=(gFr[r.f]||0)+n;}
+      if(kc!=='Todos') gCat[kc]=(gCat[kc]||0)+asocN;
+      else for(const r of (base.by_cat||[])){const n=r.n*ratio; if(n>0) gCat[r.c]=(gCat[r.c]||0)+n;}
+      for(const r of (base.by_metodo||[])){const n=r.n*ratio; if(n>0) gMet[r.m]=(gMet[r.m]||0)+n;}
+      for(const r of (base.by_rango ||[])){const n=r.n*ratio; if(n>0) gRng[r.r]=(gRng[r.r]||0)+n;}
+    }
+
+    montoTotal += asocMonto;
+    if((base.monto_max||0) > montoMax) montoMax = base.monto_max;
+    topAsoc[nombre] = {n: asocN, mt: asocMonto, mx: base.monto_max||0};
+  }
+
+  // Si solo hay filtro de estado: escalar distribuciones al total del CUBE
+  const sumaDistrib = Object.values(gMes).reduce((s,n)=>s+n,0);
+  if(nFiltrosDim===0 && sumaDistrib>0 && totalDesdeCube>0 && sumaDistrib!==totalDesdeCube){
+    const sc = totalDesdeCube/sumaDistrib;
+    const aj = obj=>Object.fromEntries(Object.entries(obj).map(([k,v])=>[k,Math.round(v*sc)]));
+    Object.assign(gMes, aj(gMes)); Object.assign(gFr,  aj(gFr));
+    Object.assign(gMet, aj(gMet)); Object.assign(gCat, aj(gCat)); Object.assign(gRng, aj(gRng));
+  }
+
+  // Convertir acumulados float a enteros exactos respetando un total de referencia
+  function escalarObj(obj, totalRef){
+    const entries = Object.entries(obj);
+    if(!entries.length) return [];
+    const suma = entries.reduce((s,[,v])=>s+v, 0);
+    const target = totalRef || Math.round(suma);
+    const res = entries.map(([k,v])=>({k, n: Math.floor(v * target / suma), _f: (v * target / suma) % 1}));
+    const diff = target - res.reduce((s,r)=>s+r.n, 0);
+    res.sort((a,b)=>b._f-a._f).slice(0, diff).forEach(r=>r.n++);
+    return res.map(({k,n})=>([k,n]));
+  }
+
+  const by_mes    = escalarObj(gMes, totalDesdeCube).sort((a,b)=>a[0].localeCompare(b[0])).map(([m,n])=>({m,n,v:0}));
+  const by_franja = escalarObj(gFr,  totalDesdeCube).map(([f,n])=>({f,n,v:0}));
+  const by_cat    = escalarObj(gCat, totalDesdeCube).map(([c,n])=>({c,n,v:0}));
+  const by_metodo = escalarObj(gMet, totalDesdeCube).sort((a,b)=>b[1]-a[1]).map(([m,n])=>({m,n,v:0}));
+  const by_rango  = escalarObj(gRng, totalDesdeCube).map(([r,n])=>({r,n,v:0}));
+
+  // Construir by_doc (tabla de asociados) con doc y metodos reales desde ASOC_OUT
+  const by_doc = Object.entries(topAsoc)
+    .sort((a,b)=>b[1].mt-a[1].mt).slice(0,15)
+    .map(([nombre,d])=>{
+      const base = ASOC_OUT[nombre] || {};
+      const docNum = (base.by_doc && base.by_doc[0]) ? base.by_doc[0].doc : '—';
+      const mets = (base.by_metodo||[]).map(r=>r.m).join('+') || '—';
+      return {doc:docNum, nombre, n_ops:d.n, monto_total:d.mt, monto_max:d.mx,
+              monto_prom:d.n>0?Math.round(d.mt/d.n):0, metodos:mets};
+    });
+
+  // Construir top20_ops: ops individuales filtradas por mes/franja/cat
+  const top20_ops = [];
+  for(const [nombre, base] of Object.entries(ASOC_OUT||{})){
+    if(!base || !base.top20 || base.top20.length===0) continue;
+    for(const op of base.top20){
+      if(km!=='Todos' && op.m!==km) continue;
+      if(kf!=='Todos' && op.fr!==kf) continue;
+      if(kc!=='Todos' && op.cat!==kc) continue;
+      top20_ops.push(op);
+    }
+  }
+  top20_ops.sort((a,b)=>b.v-a.v);
+  const top20 = top20_ops.slice(0,20);
+
+  return {
+    total: totalDesdeCube,
+    monto_total: montoTotal,
+    monto_max:   montoMax,
+    monto_prom:  totalDesdeCube>0 ? Math.round(montoTotal/totalDesdeCube) : 0,
+    by_mes, by_franja, by_cat, by_metodo, by_rango,
+    by_doc, top20, _computed: true
+  };
+}
+
+function openOutPanel(){buildOutPanel();document.getElementById('out-overlay').classList.add('open');document.body.style.overflow='hidden';}
+function isOutPanelOpen(){return document.getElementById('out-overlay').classList.contains('open');}
+function closeOutPanel(){document.getElementById('out-overlay').classList.remove('open');document.body.style.overflow='';}
+
+function metBadge(m){
+  if(!m) return '';
+  return m.split('+').map(p=>{
+    if(p==='IQR') return '<span class="badge bg" style="margin-right:2px;">IQR</span>';
+    if(p==='Perfil') return '<span class="badge by" style="margin-right:2px;">Perfil</span>';
+    return '<span style="display:inline-block;padding:1px 5px;border-radius:20px;font-size:10px;font-weight:500;background:#d5eef8;color:#0a3d62;margin-right:2px;">Reg.</span>';
+  }).join('');
+}
+
+function makeBars(cid,items,lk,nk,cols,total){
+  const mx=Math.max(...items.map(r=>r[nk]||0),1);
+  let h='';
+  items.forEach(r=>{
+    const n=r[nk]||0,p=Math.round(n/mx*100),pp=total>0?Math.round(n/total*100):0;
+    h+=`<div class="bar-row"><div class="bar-label" title="${r[lk]}">${r[lk]}</div><div class="bar-track"><div class="bar-fill" style="width:${p}%;background:${cols[r[lk]]||'#5bbcb0'};">${p>12?pp+'%':''}</div></div><div class="bar-n">${n.toLocaleString('es-CO')}</div></div>`;
+  });
+  document.getElementById(cid).innerHTML=h;
+}
+
+function buildOutPanel(){
+  const mL2={'2025-10':'Oct-25','2025-11':'Nov-25','2025-12':'Dic-25','2026-01':'Ene-26','2026-02':'Feb-26','2026-03':'Mar-26','2026-04':'Abr-26','2026-05':'May-26','2026-06':'Jun-26'};
+  const mCols={'2025-10':'#b2f0f0','2025-11':'#7dd4cc','2025-12':'#3dbcb0','2026-01':'#5bbcb0','2026-02':'#2e9e8a','2026-03':'#1a8a7a','2026-04':'#1f7a6e','2026-05':'#005a4a','2026-06':'#003d33'};
+  const metCols={'IQR':'#2e9e8a','IQR+Perfil':'#1a8a7a','Perfil':'#5bbcb0','IQR+Regulatorio':'#1f7a6e','IQR+Perfil+Regulatorio':'#005a4a'};
+  const frCols={'Madrugada':'#7dd4cc','Mañana':'#2e9e8a','Tarde':'#1f7a6e','Noche':'#5bbcb0'};
+  const catCols={'Día hábil':'#2e9e8a','Fin de semana':'#3dbcb0','Festivo':'#7dd4cc'};
+  const rngCols={'1M–2M':'#7dd4cc','2M–5M':'#3dbcb0','5M–10M':'#2e9e8a','>10M':'#1f7a6e'};
+
+  const d = getActiveOutData();
+  const isAsoc = d._isAsoc || false;
+
+  // ── Título del panel ───────────────────────────────────────────────────────
+  const tituloEl = document.querySelector('.out-panel-title span:first-child');
+  if(isAsoc){
+    tituloEl.innerHTML = '&#9888; Outliers &ndash; <strong>'+d._nombre+'</strong>';
+  } else {
+    const parts=[];
+    if(getEstado()!=='Todos') parts.push('Estado: "'+getEstado()+'"');
+    if(getMes()!=='Todos') parts.push(mL2[getMes()]||getMes());
+    if(getCat()!=='Todos') parts.push(getCat());
+    if(getFranja()!=='Todos') parts.push(getFranja());
+    const subtitle = parts.length ? parts.join(' · ') : 'IQR×1.5 + Perfil (μ+2σ) + Regulatorio ($10M)';
+    tituloEl.innerHTML = '&#9888; Detalle outliers &nbsp;<span style="font-size:12px;font-weight:400;color:#7a9a97;">'+subtitle+'</span>';
+  }
+
+  // ── Nota de contexto ───────────────────────────────────────────────────────
+  let notaEl = document.getElementById('out-nota-filtro');
+  if(!notaEl){
+    notaEl = document.createElement('div');
+    notaEl.id = 'out-nota-filtro';
+    notaEl.style.cssText='font-size:11px;color:#7a9a97;margin-bottom:12px;padding:6px 10px;background:#f5faf9;border-radius:8px;border-left:3px solid #2e9e8a;';
+    const firstKpi=document.querySelector('.out-kpis');
+    if(firstKpi) firstKpi.parentNode.insertBefore(notaEl, firstKpi.nextSibling);
+  }
+  if(isAsoc){
+    notaEl.innerHTML='&#128100; <strong>'+d._nombre+'</strong> &nbsp;&mdash;&nbsp; '+d.total+' outliers detectados para este asociado';
+    notaEl.style.borderLeftColor='#5bbcb0';
+  } else {
+    const parts=[];
+    if(getEstado()!=='Todos') parts.push('Estado: "'+getEstado()+'"');
+    if(getMes()!=='Todos') parts.push('Mes: '+(mL2[getMes()]||getMes()));
+    if(getCat()!=='Todos') parts.push(getCat());
+    if(getFranja()!=='Todos') parts.push(getFranja());
+    notaEl.innerHTML = parts.length
+      ? '&#128269; <strong>Filtros:</strong> '+parts.join(' &nbsp;|&nbsp; ')+' &mdash; <strong>'+d.total+' outliers</strong> en este subconjunto'
+      : '&#128202; Período completo &mdash; <strong>'+d.total+' outliers</strong> detectados';
+    notaEl.style.borderLeftColor='#2e9e8a';
+  }
+
+  // ── KPIs del panel ─────────────────────────────────────────────────────────
+  const pKpis = document.querySelector('#out-doc-body').closest('.out-panel').querySelectorAll('.out-kpi .kpi-val');
+  if(pKpis[0]) pKpis[0].textContent = (d.total||0).toLocaleString('es-CO');
+  if(pKpis[1]) pKpis[1].textContent = fmtCOP(d.monto_total||0);
+  if(pKpis[2]) pKpis[2].textContent = fmtCOP(d.monto_max||0);
+  if(pKpis[3]) pKpis[3].textContent = fmtCOP(d.monto_prom||0);
+
+  // ── Barras ─────────────────────────────────────────────────────────────────
+  const total = d.total||1;
+  if(d.by_metodo && d.by_metodo.length)
+    makeBars('out-bars-metodo', d.by_metodo.map(r=>({m:r.m,n:r.n})), 'm','n', metCols, total);
+  else document.getElementById('out-bars-metodo').innerHTML='<div style="font-size:11px;color:#7a9a97;padding:8px 0;">—</div>';
+
+  if(d.by_mes && d.by_mes.length)
+    makeBars('out-bars-mes', d.by_mes.map(r=>({m:mL2[r.m]||r.m,n:r.n})), 'm','n',
+      Object.fromEntries((d.by_mes).map(r=>[mL2[r.m]||r.m, mCols[r.m]||'#3dbcb0'])), total);
+  else document.getElementById('out-bars-mes').innerHTML='<div style="font-size:11px;color:#7a9a97;padding:8px 0;">—</div>';
+
+  if(d.by_rango && d.by_rango.length)
+    makeBars('out-bars-rango', d.by_rango.map(r=>({r:r.r,n:r.n})), 'r','n', rngCols, total);
+  else document.getElementById('out-bars-rango').innerHTML='<div style="font-size:11px;color:#7a9a97;padding:8px 0;">—</div>';
+
+  if(d.by_franja && d.by_franja.length)
+    makeBars('out-bars-franja', d.by_franja.map(r=>({f:r.f,n:r.n})), 'f','n', frCols, total);
+  else document.getElementById('out-bars-franja').innerHTML='<div style="font-size:11px;color:#7a9a97;padding:8px 0;">—</div>';
+
+  if(d.by_cat && d.by_cat.length)
+    makeBars('out-bars-cat', d.by_cat.map(r=>({c:r.c,n:r.n})), 'c','n', catCols, total);
+  else document.getElementById('out-bars-cat').innerHTML='<div style="font-size:11px;color:#7a9a97;padding:8px 0;">—</div>';
+
+  // ── Tabla asociados ─────────────────────────────────────────────────────────
+  let h='';
+  if(isAsoc && d.total>0){
+    // Para asociado individual: mostrar una sola fila con sus datos
+    const badge = d.total>20?'br':d.total>8?'by':'bg';
+    h=`<tr>
+      <td colspan="2"><strong>${d._nombre}</strong></td>
+      <td style="text-align:center;"><span class="badge ${badge}">${d.total}</span></td>
+      <td style="text-align:right;">${fmtCOP(d.monto_total)}</td>
+      <td style="text-align:right;">${fmtCOP(d.monto_max)}</td>
+      <td style="text-align:right;">${fmtCOP(d.monto_prom)}</td>
+      <td>—</td>
+    </tr>`;
+  } else if(d.by_doc && d.by_doc.length){
+    d.by_doc.forEach(r=>{
+      const badge=r.n_ops>20?'br':r.n_ops>8?'by':'bg';
+      h+=`<tr><td>${r.doc}</td><td>${r.nombre}</td>
+          <td style="text-align:center;"><span class="badge ${badge}">${r.n_ops}</span></td>
+          <td style="text-align:right;">${fmtCOP(r.monto_total)}</td>
+          <td style="text-align:right;">${fmtCOP(r.monto_max)}</td>
+          <td style="text-align:right;">${fmtCOP(r.monto_prom)}</td>
+          <td>${metBadge(r.metodos)}</td></tr>`;
+    });
+  }
+  document.getElementById('out-doc-body').innerHTML = h ||
+    '<tr><td colspan="7" style="text-align:center;color:#7a9a97;padding:16px;">Sin outliers en esta selección</td></tr>';
+
+  // ── Tabla top 20 ops ───────────────────────────────────────────────────────
+  const top20src = d.top20 || [];
+  const fb={'Madrugada':'br','Mañana':'bg','Tarde':'bg','Noche':'by'};
+  let h2='';
+  top20src.forEach(r=>{
+    h2+=`<tr>
+      <td>${r.f}</td><td>${r.n}</td><td>${r.d}</td>
+      <td style="text-align:right;font-weight:600;color:#1f7a6e;">${fmtCOP(r.v)}</td>
+      <td><span class="badge ${fb[r.fr]||'bg'}">${r.fr}</span></td>
+      <td>${r.cat}</td><td>${mL2[r.m]||r.m}</td>
+      <td>${metBadge(r.met)}</td>
+    </tr>`;
+  });
+  if(!h2 && d.total>0){
+    h2='<tr><td colspan="8" style="text-align:center;color:#7a9a97;padding:12px;">Detalle individual disponible en vista global.</td></tr>';
+  } else if(!h2){
+    h2='<tr><td colspan="8" style="text-align:center;color:#7a9a97;padding:12px;">Sin operaciones outlier en este subconjunto</td></tr>';
+  }
+  document.getElementById('out-ops-body').innerHTML = h2;
+}
+
+// ══════════════════════════════════════════════════════
+//  MINI-DASHBOARD PROYECCIÓN DE SALIDAS BRE-B
+// ══════════════════════════════════════════════════════
+let chartProj = null;
+let pVentana  = 7;
+
+function setPVentana(n){
+  pVentana = n;
+  [7,15,30].forEach(d=>{
+    const btn = document.getElementById('pbtn-'+d);
+    if(btn) btn.classList.toggle('active', d===n);
+  });
+  calcProj();
+}
+
+function fmtM2(v){ return '$'+Math.round(v/1e6).toLocaleString('es-CO')+'M'; }
+function fmtCOP2(v){ return '$'+Math.round(v).toLocaleString('es-CO'); }
+
+let _vistaProj = 'barras';
+function setVistaProj(vista){
+  _vistaProj = vista;
+  const c1 = document.getElementById('cProj');
+  const c2 = document.getElementById('cProj2');
+  const b1 = document.getElementById('btn-vista-barras');
+  const b2 = document.getElementById('btn-vista-desv');
+  if(vista === 'barras'){
+    if(c1) c1.style.display = '';
+    if(c2) c2.style.display = 'none';
+    if(b1){ b1.style.background='#1a3330'; b1.style.color='#fff'; }
+    if(b2){ b2.style.background='transparent'; b2.style.color='#3d6b65'; }
+  } else {
+    if(c1) c1.style.display = 'none';
+    if(c2) c2.style.display = '';
+    if(b1){ b1.style.background='transparent'; b1.style.color='#3d6b65'; }
+    if(b2){ b2.style.background='#1a3330'; b2.style.color='#fff'; }
+  }
+}
+
+function calcProj(){
+  const S  = PROJ_STATS;
+  const mu = S.mu_dia, sigma = S.sigma_dia;
+  const muOps = S.mu_ops, sigmaOps = S.sigma_ops;
+  const Z  = S.Z || 1.64;
+
+  // Fecha de inicio ingresada (o hoy)
+  const fechaInput = document.getElementById('proj-fecha');
+  let fechaInicio;
+  if(fechaInput && fechaInput.value){
+    fechaInicio = new Date(fechaInput.value + 'T00:00:00');
+  } else {
+    fechaInicio = new Date();
+    // Setear el input al último día histórico
+    if(fechaInput) fechaInput.value = S.fecha_fin;
+    fechaInicio = new Date(S.fecha_fin + 'T00:00:00');
+  }
+
+  // Proyección para la ventana activa
+  function proj(dias){
+    const esp    = mu * dias;
+    const verN   = sigma * Math.sqrt(dias) * Z;
+    const ic_inf = Math.max(0, esp - verN);
+    const ic_sup = esp + verN;
+    const opsEsp = muOps * dias;
+    const opsSig = sigmaOps * Math.sqrt(dias) * Z;
+    return {
+      dias, esp, verN, ic_inf, ic_sup,
+      opsEsp: Math.round(opsEsp),
+      opsInf: Math.max(0, Math.round(opsEsp - opsSig)),
+      opsSup: Math.round(opsEsp + opsSig),
+      verPct: sigma>0 ? (sigma/mu*100*Z).toFixed(2)+'%' : '—'
+    };
+  }
+
+  const p = proj(pVentana);
+  const p7  = proj(7);
+  const p15 = proj(15);
+  const p30 = proj(30);
+
+  // ── KPIs ──────────────────────────────────────────────────────────────────
+  document.getElementById('pv-esp').textContent     = fmtM2(p.esp);
+  document.getElementById('pv-esp-sub').textContent = 'en '+pVentana+' días desde '+fechaInput.value;
+  document.getElementById('pv-min').textContent     = fmtM2(p.ic_inf);
+  document.getElementById('pv-max').textContent     = fmtM2(p.ic_sup);
+  document.getElementById('pv-ver').textContent     = fmtM2(p.verN);
+  document.getElementById('pv-ver-pct').textContent = 'VeR% = '+p.verPct+' · NC 95%';
+  document.getElementById('proj-ndays').textContent = S.n_dias+' días';
+  document.getElementById('proj-base-periodo').textContent = S.fecha_inicio+' al '+S.fecha_fin;
+  const muLbl = document.getElementById('proj-mu-label');
+  if(muLbl) muLbl.textContent = (mu/1e6).toFixed(1);
+
+  // ── Gráfica dual: Opción 1 (barras) + Opción 3 (desviación) con toggle ──
+  const dias_labels = [];
+  const dias_bar    = [];
+  const dias_esp    = [];
+  const dias_inf    = [];
+  const dias_sup    = [];
+  const muDia = mu / 1e6;
+
+  const hist = S.hist.slice(-14);
+  hist.forEach(h => {
+    dias_labels.push(h.f.slice(5));
+    dias_bar.push(+h.m.toFixed(2));
+    dias_esp.push(null); dias_inf.push(null); dias_sup.push(null);
+  });
+
+  const verDia = sigma / 1e6 * Z;
+  for(let i=1; i<=pVentana; i++){
+    const d = new Date(fechaInicio);
+    d.setDate(d.getDate() + i);
+    const label = (d.getMonth()+1).toString().padStart(2,'0')+'-'+d.getDate().toString().padStart(2,'0');
+    dias_labels.push(label+'*');
+    dias_bar.push(null);
+    dias_esp.push(+muDia.toFixed(2));
+    dias_inf.push(+Math.max(0, muDia - verDia).toFixed(2));
+    dias_sup.push(+(muDia + verDia).toFixed(2));
+  }
+
+  const dias_dev  = dias_bar.map(v => v !== null ? +(v - muDia).toFixed(2) : null);
+  const dias_devS = dias_sup.map(v => v !== null ? +(v - muDia).toFixed(2) : null);
+  const dias_devI = dias_inf.map(v => v !== null ? +(v - muDia).toFixed(2) : null);
+
+  const baseOpts = {
+    responsive: true, maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { display: false } },
+    scales: { x: { grid:{display:false}, ticks:{font:{family:'Poppins',size:9},color:'#7a9a97',maxRotation:40,autoSkip:true,maxTicksLimit:18} } }
+  };
+
+  if(chartProj) chartProj.destroy();
+  chartProj = new Chart(document.getElementById('cProj'), {
+    type: 'line',
+    data: { labels: dias_labels, datasets: [
+      { type:'line', label:'IC sup', data:dias_sup, borderColor:'transparent', backgroundColor:'rgba(46,158,138,0.10)', fill:'+1', pointRadius:0, tension:0.3, order:5 },
+      { type:'line', label:'Banda 95%', data:dias_inf, borderColor:'rgba(46,158,138,0.35)', borderWidth:1, borderDash:[4,3], fill:false, pointRadius:0, tension:0.3, order:4 },
+      { type:'line', label:'Estimado diario', data:dias_esp, borderColor:'#d4a820', borderWidth:2.5, borderDash:[7,4], pointRadius:5, pointBackgroundColor:'#d4a820', pointBorderColor:'#fff', pointBorderWidth:2, tension:0.3, order:3 },
+      { type:'line', label:'Promedio histórico', data:Array(dias_labels.length).fill(+muDia.toFixed(2)), borderColor:'rgba(180,140,10,0.5)', borderWidth:1.5, borderDash:[3,3], pointRadius:0, tension:0, order:2 },
+      { type:'line', label:'Salida real del día', data:dias_bar,
+        borderColor:'#2e9e8a', borderWidth:2.5,
+        backgroundColor:'rgba(46,158,138,0.08)',
+        pointRadius: ctx => ctx.raw!==null ? 5 : 0,
+        pointBackgroundColor: ctx => {
+          const v=ctx.raw;
+          if(v===null) return 'transparent';
+          return v>muDia*1.5?'#e17055':v<muDia*0.5?'#5bbcb0':'#2e9e8a';
+        },
+        pointBorderColor:'#fff', pointBorderWidth:2,
+        pointHoverRadius:7,
+        tension:0.3, fill:true, spanGaps:false, order:1 }
+    ]},
+    options: { ...baseOpts, plugins: { ...baseOpts.plugins, tooltip: { callbacks: {
+      title: tt => { const l=tt[0]?.label||''; return l.endsWith('*')?l.replace('*','')+'  (proyectado)':l; },
+      label: c => {
+        if(c.raw===null||c.raw===undefined) return null;
+        const v=c.raw, lbl=c.dataset.label;
+        if(lbl==='Salida real del día'){ const diff=v-muDia, pct=((diff/muDia)*100).toFixed(0), s=diff>=0?'+':''; return ['Salida: $'+v.toFixed(1)+'M',(diff>=0?'▲':'▼')+' vs promedio: '+s+diff.toFixed(1)+'M ('+s+pct+'%)']; }
+        if(lbl==='Estimado diario') return 'Estimado: $'+v.toFixed(1)+'M/día';
+        if(lbl==='Banda 95%') return 'Rango: $'+dias_inf[c.dataIndex]?.toFixed(1)+' – $'+dias_sup[c.dataIndex]?.toFixed(1)+'M';
+        if(lbl==='Promedio histórico') return 'Promedio: $'+muDia.toFixed(1)+'M/día';
+        return null;
+      }
+    }}},
+    scales: { ...baseOpts.scales, y: { grid:{color:'rgba(0,0,0,0.04)'}, title:{display:true,text:'Monto del día ($M)',font:{family:'Poppins',size:9},color:'#7a9a97'}, ticks:{font:{family:'Poppins',size:10},color:'#7a9a97',callback:v=>'$'+v+'M'} } }
+    }
+  });
+
+  if(window._chartProj2) window._chartProj2.destroy();
+  window._chartProj2 = new Chart(document.getElementById('cProj2'), {
+    type: 'bar',
+    data: { labels: dias_labels, datasets: [
+      { type:'line', label:'Rango sup', data:dias_devS, borderColor:'transparent', backgroundColor:'rgba(240,200,90,0.15)', fill:'+1', pointRadius:0, tension:0, order:4 },
+      { type:'line', label:'Rango proy.', data:dias_devI, borderColor:'rgba(240,200,90,0.55)', borderWidth:1.5, borderDash:[4,3], fill:false, pointRadius:0, tension:0, order:3 },
+      { type:'bar', label:'Desviación del día', data:dias_dev,
+        backgroundColor: dias_dev.map(v => v===null?'transparent':v>=0?'rgba(46,158,138,0.75)':'rgba(225,112,85,0.78)'),
+        borderColor:     dias_dev.map(v => v===null?'transparent':v>=0?'#2e9e8a':'#e17055'),
+        borderWidth:1.5, borderRadius:4, order:1 }
+    ]},
+    options: { ...baseOpts, plugins: { ...baseOpts.plugins, tooltip: { callbacks: {
+      title: tt => { const l=tt[0]?.label||''; return l.endsWith('*')?l.replace('*','')+'  (proyectado)':l; },
+      label: c => {
+        if(c.raw===null||c.raw===undefined) return null;
+        const v=c.raw, lbl=c.dataset.label;
+        if(lbl==='Desviación del día'){ const s=v>=0?'+':''; return [(v>=0?'▲ Por encima':'▼ Por debajo')+': '+s+'$'+v.toFixed(1)+'M  (promedio $'+muDia.toFixed(1)+'M/día)']; }
+        if(lbl==='Rango proy.') return 'Rango esperado: '+dias_devI[c.dataIndex]?.toFixed(1)+' a +$'+dias_devS[c.dataIndex]?.toFixed(1)+'M';
+        return null;
+      }
+    }}},
+    scales: { ...baseOpts.scales, y: { grid:{color:'rgba(0,0,0,0.04)'}, title:{display:true,text:'Desviación vs promedio ($M)',font:{family:'Poppins',size:9},color:'#7a9a97'}, ticks:{font:{family:'Poppins',size:10},color:'#7a9a97',callback:v=>(v>=0?'+':'')+v+'M'} } }
+    }
+  });
+}
+
+// Inicializar con fecha del último día histórico
+document.addEventListener('DOMContentLoaded', function(){
+  // Inicializar calendario desde DATA_RAW embebido
+  if(typeof DATA_RAW !== 'undefined' && DATA_RAW.fechas){
+    initCalFechas();
+  }
+  const fi = document.getElementById('proj-fecha');
+  if(fi && PROJ_STATS && PROJ_STATS.fecha_fin){
+    fi.value = PROJ_STATS.fecha_fin;
+    fi.max   = PROJ_STATS.fecha_fin;
+    fi.min   = PROJ_STATS.fecha_inicio;
+  }
+  calcProj();
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GENERADOR DE INFORME PDF
+// ══════════════════════════════════════════════════════════════
+let infCharts = [];
+
+function fmtInf(v){ return '$'+Math.round(v/1e6).toFixed(1)+'M'; }
+function fmtCOPInf(v){ return '$'+Math.round(v).toLocaleString('es-CO'); }
+
+function cerrarInforme(){
+  document.getElementById('informe-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+  infCharts.forEach(c=>{ try{ c.destroy(); }catch(e){} });
+  infCharts = [];
+}
+
+function generarInforme(){
+  // Poblar datos desde el estado actual del tablero
+  const mes    = getMes();
+  const cat    = getCat();
+  const franja = getFranja();
+  const estado = getEstado();
+  const key    = getCubeKey();
+  const d      = CUBE[key] || CUBE['Todos|Todos|Todos|Todos'];
+  const k      = d ? d.kpis : {n_ops:0,monto_total:0,monto_prom:0,docs:0,outliers:0};
+  const isAsoc = selectedAsoc && DOCMAP[selectedAsoc];
+  const Z = PROJ_STATS.Z || 1.64;
+  const mu = PROJ_STATS.mu_dia, sigma = PROJ_STATS.sigma_dia;
+
+  const mesL = {'2025-10':'Oct 2025','2025-11':'Nov 2025','2025-12':'Dic 2025','2026-01':'Ene 2026','2026-02':'Feb 2026'};
+
+  // ── Logo ──────────────────────────────────────────────────────────────────
+  const logoEl = document.querySelector('img[alt="Logo Febor"]');
+  if(logoEl){ document.getElementById('inf-logo').src = logoEl.src; }
+
+  // ── Meta ──────────────────────────────────────────────────────────────────
+  const ahora = new Date().toLocaleDateString('es-CO',{day:'2-digit',month:'long',year:'numeric'});
+  document.getElementById('inf-meta-txt').innerHTML =
+    'Período: Oct 2025 – Jun 2026 &nbsp;|&nbsp; Generado: '+ahora+
+    (isAsoc ? ' &nbsp;|&nbsp; Asociado: <strong>'+selectedAsoc+'</strong>' : '');
+  document.getElementById('inf-footer-fecha').textContent = 'Generado: '+ahora;
+
+  // ── Filtros activos ───────────────────────────────────────────────────────
+  const filtros = [];
+  if(estado!=='Todos') filtros.push('Estado: "'+estado+'"');
+  if(mes!=='Todos')    filtros.push('Mes: '+(mesL[mes]||mes));
+  if(cat!=='Todos')    filtros.push('Tipo de día: '+cat);
+  if(franja!=='Todos') filtros.push('Franja: '+franja);
+  if(isAsoc)           filtros.push('Asociado: '+selectedAsoc);
+  document.getElementById('inf-filtros-txt').innerHTML = filtros.length
+    ? '🔍 <strong>Filtros activos:</strong> ' + filtros.join(' &nbsp;|&nbsp; ')
+    : '📊 Sin filtros activos — período completo Oct 2025 – Jun 2026';
+
+  // ── KPIs ──────────────────────────────────────────────────────────────────
+  if(isAsoc){
+    const ad = DOCMAP[selectedAsoc];
+    document.getElementById('inf-k-ops').textContent   = ad.n.toLocaleString('es-CO');
+    document.getElementById('inf-k-monto').textContent = fmtInf(ad.m);
+    document.getElementById('inf-k-prom').textContent  = 'Prom. '+fmtCOPInf(ad.p);
+    document.getElementById('inf-k-docs').textContent  = '1';
+    document.getElementById('inf-k-out').textContent   = ad.o.toLocaleString('es-CO');
+    document.getElementById('inf-k-outpct').textContent= (ad.o>0?Math.round(ad.o/ad.n*100)+'%':'0%')+' del total';
+  } else {
+    document.getElementById('inf-k-ops').textContent   = k.n_ops.toLocaleString('es-CO');
+    document.getElementById('inf-k-monto').textContent = fmtInf(k.monto_total);
+    document.getElementById('inf-k-prom').textContent  = 'Prom. '+fmtCOPInf(k.monto_prom);
+    document.getElementById('inf-k-docs').textContent  = k.docs.toLocaleString('es-CO');
+    document.getElementById('inf-k-out').textContent   = k.outliers.toLocaleString('es-CO');
+    document.getElementById('inf-k-outpct').textContent= (k.n_ops>0?Math.round(k.outliers/k.n_ops*100)+'%':'0%')+' | IQR+Perfil+Reg.';
+  }
+
+  // ── Helper charts ──────────────────────────────────────────────────────────
+  function mkChart(id, cfg){
+    const el = document.getElementById(id);
+    if(!el) return;
+    try{ Chart.getChart(el)?.destroy(); }catch(e){}
+    const c = new Chart(el, cfg);
+    infCharts.push(c);
+    return c;
+  }
+  const mesOrder = ['2025-10','2025-11','2025-12','2026-01','2026-02'];
+  const mesLabel = {'2025-10':'Oct-25','2025-11':'Nov-25','2025-12':'Dic-25','2026-01':'Ene-26','2026-02':'Feb-26'};
+  const baseOpts = { responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{ display:false }, tooltip:{ enabled:true } } };
+
+  // ── Gráfica evolución mensual — SIEMPRE histórico global (estática) ────────
+  // No se filtra por asociado ni por otros filtros: muestra la evolución completa
+  const globalMes = CUBE['Todos|Todos|Todos|Todos'].by_mes || [];
+  const md={};
+  globalMes.forEach(r=>md[r.m]={n:r.n,v:r.v});
+  const mLbs=[],mOps=[],mMontos=[];
+  mesOrder.forEach(m=>{ if(md[m]){ mLbs.push(mesLabel[m]); mOps.push(md[m].n); mMontos.push(Math.round(md[m].v/1e6)); }});
+
+  mkChart('inf-cMes',{ type:'bar', data:{ labels:mLbs, datasets:[
+    { type:'bar',  data:mOps,    backgroundColor:'#2e9e8a', borderRadius:4, yAxisID:'y'  },
+    { type:'line', data:mMontos, borderColor:'#1f7a6e', borderWidth:2, borderDash:[5,4],
+      pointRadius:4, pointBackgroundColor:'#1f7a6e', tension:0.3, yAxisID:'y2' }
+  ]}, options:{ ...baseOpts, scales:{
+    y: { grid:{color:'rgba(0,0,0,0.05)'}, ticks:{font:{family:'Poppins',size:9},color:'#7a9a97',callback:v=>v.toLocaleString()} },
+    y2:{ position:'right', grid:{display:false}, ticks:{font:{family:'Poppins',size:9},color:'#1f7a6e',callback:v=>'$'+v+'M'} }
+  }}});
+
+  // Tabla mensual
+  let tblH = '<table class="inf-table"><thead><tr><th>Mes</th><th>Operaciones</th><th>Monto total</th></tr></thead><tbody>';
+  mLbs.forEach((l,i)=>{ tblH+=`<tr><td>${l}</td><td>${mOps[i].toLocaleString('es-CO')}</td><td>$${mMontos[i]}M</td></tr>`; });
+  tblH += '</tbody></table>';
+  document.getElementById('inf-tabla-mes').innerHTML = tblH;
+
+  // ── Gráfica horas ─────────────────────────────────────────────────────────
+  const byHora = isAsoc
+    ? Object.entries(DOCMAP[selectedAsoc].bh).map(([h,n])=>({h:parseInt(h),n}))
+    : (d ? d.by_hora : []);
+  const hm={};
+  byHora.forEach(r=>hm[r.h]=r.n);
+  const hLbs=[],hDat=[],hCols=[];
+  for(let i=0;i<24;i++){ hLbs.push(i+'h'); hDat.push(hm[i]||0); hCols.push(i<6?'#98e4de':i<12?'#2e9e8a':i<18?'#1f7a6e':'#5bbcb0'); }
+  mkChart('inf-cHora',{ type:'bar', data:{ labels:hLbs, datasets:[{ data:hDat, backgroundColor:hCols, borderRadius:2 }] },
+    options:{ ...baseOpts, scales:{ x:{grid:{display:false},ticks:{font:{family:'Poppins',size:8},color:'#7a9a97',maxRotation:0,autoSkip:true,maxTicksLimit:12}},
+      y:{grid:{color:'rgba(0,0,0,0.04)'},ticks:{font:{family:'Poppins',size:9},color:'#7a9a97'}} }}});
+
+  // ── Barras tipo día ───────────────────────────────────────────────────────
+  const byCat = isAsoc
+    ? Object.entries(DOCMAP[selectedAsoc].bc).map(([c,n])=>({c,n}))
+    : (d ? d.by_cat : []);
+  const total = k.n_ops || 1;
+  const ccols = {'Día hábil':'#2e9e8a','Fin de semana':'#5bbcb0','Festivo':'#f0c85a'};
+  const cm={};
+  byCat.forEach(r=>cm[r.c||r.cat]=r.n);
+  let bcat='';
+  ['Día hábil','Fin de semana','Festivo'].forEach(c=>{
+    const n=cm[c]||0, p=Math.round(n/total*100);
+    bcat+=`<div class="inf-bar-row"><div class="inf-bar-label">${c}</div>
+      <div class="inf-bar-track"><div class="inf-bar-fill" style="width:${p}%;background:${ccols[c]};">${p>10?p+'%':''}</div></div>
+      <div class="inf-bar-n">${n.toLocaleString('es-CO')}</div></div>`;
+  });
+  document.getElementById('inf-bars-cat').innerHTML = bcat;
+
+  // ── Barras franja ─────────────────────────────────────────────────────────
+  const byFr = isAsoc
+    ? Object.entries(DOCMAP[selectedAsoc].bf).map(([f,n])=>({f,n}))
+    : (d ? d.by_franja : []);
+  const fcols={'Madrugada':'#98e4de','Mañana':'#2e9e8a','Tarde':'#1f7a6e','Noche':'#5bbcb0'};
+  const fm={};
+  byFr.forEach(r=>fm[r.f||r.fr]=r.n);
+  let bfr='';
+  ['Tarde','Mañana','Noche','Madrugada'].forEach(f=>{
+    const n=fm[f]||0, p=Math.round(n/total*100);
+    bfr+=`<div class="inf-bar-row"><div class="inf-bar-label">${f}</div>
+      <div class="inf-bar-track"><div class="inf-bar-fill" style="width:${p}%;background:${fcols[f]};">${p>10?p+'%':''}</div></div>
+      <div class="inf-bar-n">${n.toLocaleString('es-CO')}</div></div>`;
+  });
+  document.getElementById('inf-bars-franja').innerHTML = bfr;
+
+  // ── Gráficas de actividad por día ─────────────────────────────────────────
+  const diaD = getDiaData();
+  const dias5 = ['Lunes','Martes','Miércoles','Jueves','Viernes'];
+
+  // Hábiles
+  const habRaw = diaD.hab||[];
+  mkChart('inf-cDia',{ type:'bar', data:{ labels:dias5, datasets:[
+    { type:'bar',  data:habRaw.map(r=>r.n||0), backgroundColor:'#2e9e8a', borderRadius:4, yAxisID:'y' },
+    { type:'line', data:habRaw.map(r=>Math.round((r.m||0)/1e6)), borderColor:'#1f7a6e',
+      borderWidth:2, borderDash:[5,4], pointRadius:3, pointBackgroundColor:'#1f7a6e', tension:0.3, yAxisID:'y2' }
+  ]}, options:{ ...baseOpts, scales:{
+    x:{grid:{display:false},ticks:{font:{family:'Poppins',size:9},color:'#1a3330'}},
+    y:{ticks:{font:{family:'Poppins',size:9},color:'#7a9a97',callback:v=>v.toLocaleString()}},
+    y2:{position:'right',grid:{display:false},ticks:{font:{family:'Poppins',size:9},color:'#1f7a6e',callback:v=>'$'+v+'M'}}
+  }}});
+
+  // Finde
+  const findeRaw = diaD.finde||[];
+  mkChart('inf-cFinde',{ type:'bar', data:{ labels:['Sábado','Domingo'], datasets:[
+    { type:'bar',  data:findeRaw.map(r=>r.n||0), backgroundColor:'#5bbcb0', borderRadius:6, yAxisID:'y' },
+    { type:'line', data:findeRaw.map(r=>Math.round((r.m||0)/1e6)), borderColor:'#1f7a6e',
+      borderWidth:2, borderDash:[5,4], pointRadius:4, pointBackgroundColor:'#1f7a6e', tension:0.3, yAxisID:'y2' }
+  ]}, options:{ ...baseOpts, scales:{
+    x:{grid:{display:false},ticks:{font:{family:'Poppins',size:10,weight:'600'},color:'#1a3330'}},
+    y:{ticks:{font:{family:'Poppins',size:9},color:'#7a9a97',callback:v=>v.toLocaleString()}},
+    y2:{position:'right',grid:{display:false},ticks:{font:{family:'Poppins',size:9},color:'#1f7a6e',callback:v=>'$'+v+'M'}}
+  }}});
+
+  // Festivos
+  const festRaw = diaD.festivo||[];
+  if(festRaw.length){
+    mkChart('inf-cFestivo',{ type:'bar', data:{ labels:festRaw.map(r=>r.d), datasets:[
+      { type:'bar',  data:festRaw.map(r=>r.n||0), backgroundColor:'#f0c85a', borderRadius:4, yAxisID:'y' },
+      { type:'line', data:festRaw.map(r=>Math.round((r.m||0)/1e6)), borderColor:'#d4a820',
+        borderWidth:2, borderDash:[5,4], pointRadius:3, pointBackgroundColor:'#d4a820', tension:0.3, yAxisID:'y2' }
+    ]}, options:{ ...baseOpts, scales:{
+      x:{grid:{display:false},ticks:{font:{family:'Poppins',size:9},color:'#1a3330',maxRotation:40}},
+      y:{ticks:{font:{family:'Poppins',size:9},color:'#7a9a97',callback:v=>v.toLocaleString()}},
+      y2:{position:'right',grid:{display:false},ticks:{font:{family:'Poppins',size:9},color:'#d4a820',callback:v=>'$'+v+'M'}}
+    }}});
+  } else {
+    document.getElementById('inf-cFestivo').parentElement.innerHTML =
+      '<div style="font-size:12px;color:#7a9a97;padding:16px;text-align:center;">Sin festivos en este subconjunto</div>';
+  }
+
+  // ── Proyección ────────────────────────────────────────────────────────────
+  function proj(dias){
+    const esp  = mu * dias;
+    const verN = sigma * Math.sqrt(dias) * Z;
+    return { esp, ic_inf: Math.max(0, esp-verN), ic_sup: esp+verN };
+  }
+  [7,15,30].forEach(dias=>{
+    const p = proj(dias);
+    document.getElementById('inf-p'+dias+'-esp').textContent = fmtInf(p.esp);
+    document.getElementById('inf-p'+dias+'-ic').textContent  = fmtInf(p.ic_inf)+' – '+fmtInf(p.ic_sup);
+  });
+  document.getElementById('inf-mu').textContent    = fmtCOPInf(mu);
+  document.getElementById('inf-sigma').textContent = fmtCOPInf(sigma);
+  document.getElementById('inf-cv').textContent    = PROJ_STATS.cv_dia+'%';
+  document.getElementById('inf-ndays').textContent = PROJ_STATS.n_dias;
+
+  // ── Mostrar panel ─────────────────────────────────────────────────────────
+  document.getElementById('informe-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') cerrarInforme(); });
+
+function imprimirInforme(){
+  const panel = document.getElementById('informe-panel');
+  if(!panel){ alert('Genera el informe primero.'); return; }
+
+  // 1. Capturar canvas como imágenes antes de abrir la ventana
+  const canvasIds = ['inf-cMes','inf-cHora','inf-cDia','inf-cFinde','inf-cFestivo'];
+  const canvasImgs = {};
+  canvasIds.forEach(id => {
+    const c = document.getElementById(id);
+    if(c && c.tagName === 'CANVAS'){
+      try{ canvasImgs[id] = c.toDataURL('image/png'); } catch(e){}
+    }
+  });
+
+  // 2. Clonar solo el contenido del panel, sin botones de acción
+  const clone = panel.cloneNode(true);
+  // Eliminar botones internos del informe
+  clone.querySelectorAll('.inf-btn, .inf-actions').forEach(el => el.remove());
+  const panelHtml = clone.innerHTML;
+
+  // 3. Construir HTML de impresión limpio y autocontenido
+  const printHtml = `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Informe BRE-B Enviar — Febor</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Poppins',sans-serif;font-size:12px;background:#fff;color:#1a3330;}
+.inf-header{background:linear-gradient(135deg,#1f7a6e,#2e9e8a);padding:28px 36px 22px;color:#fff;}
+.inf-header h2{font-size:22px;font-weight:700;margin-bottom:4px;}
+.inf-meta{font-size:12px;opacity:.85;margin-top:6px;}
+.inf-body{padding:24px 36px;}
+.inf-section{background:#fff;border-radius:8px;border:1px solid #ddeae8;padding:16px 18px;margin-bottom:14px;page-break-inside:avoid;}
+.inf-sec-title{font-size:14px;font-weight:700;color:#1a3330;margin-bottom:12px;display:flex;align-items:center;gap:8px;padding-bottom:8px;border-bottom:1.5px solid #eef4f3;}
+.inf-sec-title::before{content:'';display:block;width:4px;height:18px;border-radius:3px;background:linear-gradient(#2e9e8a,#5bbcb0);flex-shrink:0;}
+.inf-filtros{background:#eef8f5;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#1f7a6e;border:1px solid #aae0d8;}
+.inf-kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+.inf-kpi{background:#f5faf9;border-radius:8px;padding:12px 14px;border-left:3px solid #2e9e8a;}
+.inf-kpi-label{font-size:10px;font-weight:600;color:#7a9a97;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}
+.inf-kpi-val{font-size:20px;font-weight:700;color:#1a3330;}
+.inf-kpi-sub{font-size:10px;color:#7a9a97;margin-top:2px;}
+.inf-chart-wrap{width:100%;text-align:center;}
+.inf-chart-wrap img{width:100%;max-height:200px;object-fit:contain;}
+.inf-table{width:100%;border-collapse:collapse;font-size:11px;margin-top:10px;}
+.inf-table th{background:#eef8f5;color:#1f7a6e;font-weight:600;padding:6px 8px;text-align:left;border-bottom:1.5px solid #c2ece6;font-size:10px;text-transform:uppercase;}
+.inf-table td{padding:6px 8px;border-bottom:1px solid #f3f7f6;color:#1a3330;}
+.inf-row2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.inf-bar-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.inf-bar-label{font-size:11px;color:#3d6b65;width:90px;text-align:right;flex-shrink:0;}
+.inf-bar-track{flex:1;height:12px;background:#eef4f3;border-radius:20px;overflow:hidden;}
+.inf-bar-fill{height:100%;border-radius:20px;display:flex;align-items:center;justify-content:flex-end;padding-right:4px;font-size:9px;font-weight:600;color:#fff;}
+.inf-bar-n{font-size:10px;color:#7a9a97;width:38px;text-align:right;flex-shrink:0;}
+.inf-proj-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.inf-proj-box{background:linear-gradient(135deg,#2e9e8a,#5bbcb0);border-radius:10px;padding:14px;text-align:center;color:#fff;}
+.inf-proj-box.p15{background:linear-gradient(135deg,#1a8a7a,#2e9e8a);}
+.inf-proj-box.p30{background:linear-gradient(135deg,#1f7a6e,#1a8a7a);}
+.inf-proj-dias{font-size:11px;font-weight:600;opacity:.85;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;}
+.inf-proj-esp{font-size:20px;font-weight:700;margin-bottom:4px;}
+.inf-proj-ic{font-size:10px;opacity:.8;}
+.inf-footer-bar{background:#1a3330;padding:14px 36px;display:flex;justify-content:space-between;align-items:center;}
+.inf-ft{font-size:11px;color:#7a9a97;}
+.inf-fb{font-size:11px;font-weight:600;color:#2e9e8a;}
+.inf-actions{display:none!important;}
+button{display:none!important;}
+@media print{
+  @page{margin:8mm 10mm;size:A4;}
+  body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .inf-section{page-break-inside:avoid;}
+}
+</style>
+</head>
+<body>
+${panelHtml}
+<script>
+// Reemplazar cada canvas por su imagen capturada
+const imgs = ${JSON.stringify(canvasImgs)};
+Object.entries(imgs).forEach(([id, src]) => {
+  const el = document.getElementById(id);
+  if(el){
+    const img = document.createElement('img');
+    img.src = src;
+    img.style.cssText = 'width:100%;max-height:220px;object-fit:contain;display:block;';
+    el.parentNode.replaceChild(img, el);
+  }
+});
+// Disparar impresión una vez que la fuente cargue
+window.onload = function(){ setTimeout(function(){ window.print(); }, 600); };
+<\/script>
+</body>
+</html>`;
+
+  // 4. Abrir ventana nueva con el HTML limpio
+  const win = window.open('', '_blank', 'width=960,height=820,scrollbars=yes,menubar=yes,toolbar=yes');
+  if(!win){
+    alert('Permite ventanas emergentes para este sitio (busca el ícono de bloqueo en la barra de dirección) y vuelve a intentarlo.');
+    return;
+  }
+  win.document.open();
+  win.document.write(printHtml);
+  win.document.close();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  MOTOR DE CARGA Y RECÁLCULO DESDE EXCEL
+// ══════════════════════════════════════════════════════════════
+
+function setProgreso(txt){ const el=document.getElementById('carga-progreso'); if(el) el.textContent = txt; }
+function abrirCarga(){ const ov=document.getElementById('carga-overlay'); if(ov) ov.classList.add('open'); }
+function cerrarCarga(ok, msg){
+  const sp=document.getElementById('carga-spinner'); if(sp) sp.style.display='none';
+  const ico = document.getElementById('carga-icono');
+  if(ico){ ico.style.display = 'block';
+  ico.innerHTML = ok
+    ? '<div class="carga-ok">✅</div>'
+    : '<div class="carga-error">❌</div>'; }
+  const _ct=document.getElementById('carga-titulo'); if(_ct) _ct.textContent = ok ? '¡Tablero actualizado!' : 'Error al procesar';
+  const _cs=document.getElementById('carga-sub'); if(_cs) _cs.textContent = msg;
+  setTimeout(()=>{
+    document.getElementById('carga-overlay').classList.remove('open');
+    document.getElementById('carga-spinner').style.display = 'block';
+    ico.style.display = 'none';
+    document.getElementById('carga-progreso').textContent = '';
+  }, ok ? 2000 : 4000);
+}
+
+
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+// ── MOTOR DE RECÁLCULO ────────────────────────────────────────────────────────
+async function recalcularCubos(datos, onProg){
+  const Z=1.64;
+  function prog(msg){ if(onProg) onProg(msg); }
+
+  // ── Límites globales ─────────────────────────────────────────────────────
+  prog('[1/5] Calculando límites...');
+  await new Promise(r=>setTimeout(r,20));
+
+  const vals=[...datos.map(r=>r.valor)].sort((a,b)=>a-b);
+  const q1=vals[Math.floor(vals.length*.25)], q3=vals[Math.floor(vals.length*.75)];
+  const limIQR=q3+1.5*(q3-q1), limReg=10000000;
+
+  const dv={};
+  datos.forEach(r=>{if(!dv[r.doc])dv[r.doc]=[];dv[r.doc].push(r.valor);});
+  const dl={};
+  Object.entries(dv).forEach(([d,vs])=>{
+    const mu=vs.reduce((a,b)=>a+b,0)/vs.length;
+    const sd=Math.sqrt(vs.reduce((a,b)=>a+(b-mu)**2,0)/vs.length);
+    dl[d]=mu+2*sd;
+  });
+  datos.forEach(r=>{
+    r.out=r.valor>limIQR||r.valor>(dl[r.doc]||Infinity)||r.valor>limReg;
+    const m=[];
+    if(r.valor>limIQR)m.push('IQR');
+    if(r.valor>(dl[r.doc]||Infinity))m.push('Perfil');
+    if(r.valor>limReg)m.push('Regulatorio');
+    r.met=m.join('+');
+  });
+
+  // ── Dimensiones dinámicas ────────────────────────────────────────────────
+  const ESTADOS=['Todos',...[...new Set(datos.map(r=>r.estado))].sort()];
+  const MESES  =['Todos',...[...new Set(datos.map(r=>r.mes))].sort()];
+  const CATS   =['Todos','Día hábil','Fin de semana','Festivo'];
+  const FRANJAS=['Todos','Madrugada','Mañana','Tarde','Noche'];
+  const DHAB   =['Lunes','Martes','Miércoles','Jueves','Viernes'];
+  const rng=v=>v<2e6?'1M–2M':v<5e6?'2M–5M':v<10e6?'5M–10M':'>10M';
+
+  // ── Acumuladores ─────────────────────────────────────────────────────────
+  const cube={}, dia={}, out={};
+  function mkC(){ return {n:0,m:0,docs:new Set(),outs:0,hm:{},mm:{},cm:{},fm:{},tp:{},dh:{},df:{},fest:{}}; }
+  function mkO(){ return {n:0,m:0,mx:0,mets:{},mes:{},fr:{},cat:{},rng:{},docs:{}}; }
+  function gc(k){ if(!cube[k])cube[k]=mkC(); return cube[k]; }
+  function gd(k){ if(!dia[k]) dia[k]={h:{},f:{},fest:{}}; return dia[k]; }
+  function go(k){ if(!out[k]) out[k]=mkO(); return out[k]; }
+
+  // ── Una sola pasada en lotes para liberar el hilo ───────────────────────
+  prog('[2/5] Procesando datos...');
+  await new Promise(r=>setTimeout(r,20));
+
+  const BATCH=300;
+  for(let bi=0;bi<datos.length;bi+=BATCH){
+    // Yield cada lote para no bloquear el UI
+    await new Promise(r=>setTimeout(r,0));
+    if(bi%1500===0) prog('[2/5] Procesando... '+Math.round(bi/datos.length*100)+'%');
+
+    const batch=datos.slice(bi,bi+BATCH);
+    batch.forEach(r=>{
+      const eK=['Todos',r.estado], mK=['Todos',r.mes], cK=['Todos',r.cat_dia], fK=['Todos',r.franja];
+      for(const e of eK) for(const m of mK) for(const c of cK) for(const f of fK){
+        const k=`${e}|${m}|${c}|${f}`;
+        const cb=gc(k);
+        cb.n++; cb.m+=r.valor; cb.docs.add(r.doc); if(r.out)cb.outs++;
+        cb.hm[r.hora]=(cb.hm[r.hora]||{n:0,m:0}); cb.hm[r.hora].n++;cb.hm[r.hora].m+=r.valor;
+        cb.mm[r.mes] =(cb.mm[r.mes] ||{n:0,m:0}); cb.mm[r.mes].n++; cb.mm[r.mes].m +=r.valor;
+        cb.cm[r.cat_dia]=(cb.cm[r.cat_dia]||{n:0,v:0});cb.cm[r.cat_dia].n++;cb.cm[r.cat_dia].v+=r.valor;
+        cb.fm[r.franja] =(cb.fm[r.franja] ||{n:0,v:0});cb.fm[r.franja].n++; cb.fm[r.franja].v +=r.valor;
+        if(!cb.tp[r.doc])cb.tp[r.doc]={d:r.doc,n:r.nombre,ops:0,m:0};
+        cb.tp[r.doc].ops++;cb.tp[r.doc].m+=r.valor;
+        // DIA
+        const db=gd(k);
+        if(r.cat_dia==='Día hábil'){db.h[r.diaNombre]=(db.h[r.diaNombre]||{n:0,m:0,s:new Set()});db.h[r.diaNombre].n++;db.h[r.diaNombre].m+=r.valor;db.h[r.diaNombre].s.add(r.doc);}
+        else if(r.cat_dia==='Fin de semana'){db.f[r.diaNombre]=(db.f[r.diaNombre]||{n:0,m:0,s:new Set()});db.f[r.diaNombre].n++;db.f[r.diaNombre].m+=r.valor;db.f[r.diaNombre].s.add(r.doc);}
+        else if(r.cat_dia==='Festivo'){const fd=r.fecha.toLocaleDateString('es-CO',{day:'2-digit',month:'short'}).replace('.','');db.fest[fd]=(db.fest[fd]||{n:0,m:0,s:new Set()});db.fest[fd].n++;db.fest[fd].m+=r.valor;db.fest[fd].s.add(r.doc);}
+        // OUT
+        if(r.out){
+          const ob=go(k);
+          ob.n++;ob.m+=r.valor;ob.mx=Math.max(ob.mx,r.valor);
+          ob.mets[r.met]=(ob.mets[r.met]||0)+1;ob.mes[r.mes]=(ob.mes[r.mes]||0)+1;
+          ob.fr[r.franja]=(ob.fr[r.franja]||0)+1;ob.cat[r.cat_dia]=(ob.cat[r.cat_dia]||0)+1;
+          const rg=rng(r.valor);ob.rng[rg]=(ob.rng[rg]||0)+1;
+          if(!ob.docs[r.doc])ob.docs[r.doc]={doc:r.doc,nombre:r.nombre,n_ops:0,mt:0,mx:0,mets:new Set()};
+          const od=ob.docs[r.doc];od.n_ops++;od.mt+=r.valor;od.mx=Math.max(od.mx,r.valor);od.mets.add(r.met);
+        }
+      }
+    });
+  }
+
+  prog('[3/5] Serializando CUBE y DIA_CUBE...');
+  await new Promise(r=>setTimeout(r,20));
+
+  // ── Serializar CUBE ───────────────────────────────────────────────────────
+  const newCUBE={};
+  Object.entries(cube).forEach(([k,cb])=>{
+    const n=cb.n,mt=Math.round(cb.m);
+    const top5=Object.values(cb.tp).sort((a,b)=>b.m-a.m).slice(0,5).map(r=>({d:r.d,n:r.n,ops:r.ops,m:Math.round(r.m)}));
+    newCUBE[k]={
+      kpis:{n_ops:n,monto_total:mt,monto_prom:n?Math.round(mt/n):0,docs:cb.docs.size,outliers:cb.outs},
+      by_hora:Object.entries(cb.hm).map(([h,v])=>({h:+h,n:v.n,m:Math.round(v.m)})),
+      by_mes: Object.entries(cb.mm).map(([m,v])=>({m,n:v.n,v:Math.round(v.m)})).sort((a,b)=>a.m.localeCompare(b.m)),
+      by_cat: Object.entries(cb.cm).map(([c,v])=>({c,n:v.n,v:Math.round(v.v)})),
+      by_franja:Object.entries(cb.fm).map(([f,v])=>({f,n:v.n,v:Math.round(v.v)})),
+      top_docs:top5
+    };
+  });
+
+  // ── Serializar DIA_CUBE ───────────────────────────────────────────────────
+  const newDIA={};
+  Object.entries(dia).forEach(([k,db])=>{
+    newDIA[k]={
+      hab:  DHAB.map(d=>({d,n:db.h[d]?.n||0,m:Math.round(db.h[d]?.m||0),docs:db.h[d]?.s.size||0})),
+      finde:['Sábado','Domingo'].map(d=>({d,n:db.f[d]?.n||0,m:Math.round(db.f[d]?.m||0),docs:db.f[d]?.s.size||0})),
+      festivo:Object.entries(db.fest).map(([d,v])=>({d,n:v.n,m:Math.round(v.m),docs:v.s.size}))
+    };
+  });
+  // Rellenar combos sin datos
+  for(const e of ESTADOS)for(const m of MESES)for(const c of CATS)for(const f of FRANJAS){
+    const k=`${e}|${m}|${c}|${f}`;
+    if(!newCUBE[k])newCUBE[k]={kpis:{n_ops:0,monto_total:0,monto_prom:0,docs:0,outliers:0},by_hora:[],by_mes:[],by_cat:[],by_franja:[],top_docs:[]};
+    if(!newDIA[k])  newDIA[k]={hab:DHAB.map(d=>({d,n:0,m:0,docs:0})),finde:[{d:'Sábado',n:0,m:0,docs:0},{d:'Domingo',n:0,m:0,docs:0}],festivo:[]};
+  }
+
+  prog('[4/5] Calculando por asociado...');
+  await new Promise(r=>setTimeout(r,20));
+
+  // ── DOCMAP + ASOC_DIA + ASOC_OUT ─────────────────────────────────────────
+  const nmap={};
+  datos.forEach(r=>{if(!nmap[r.nombre])nmap[r.nombre]=[];nmap[r.nombre].push(r);});
+  const newDOCMAP={},newASOC_DIA={},newASOC_OUT={};
+
+  for(const [nombre,rows] of Object.entries(nmap)){
+    const vs=rows.map(r=>r.valor),mu=vs.reduce((a,b)=>a+b,0)/vs.length;
+    const bm=Object.entries(rows.reduce((m,r)=>{m[r.mes]=(m[r.mes]||[0,0]);m[r.mes][0]++;m[r.mes][1]+=r.valor;return m;},{})).map(([m,[n,v]])=>[m,n,Math.round(v)]);
+    const bh=rows.reduce((h,r)=>{h[r.hora]=(h[r.hora]||0)+r.valor;return h;},{});
+    const bc=rows.reduce((c,r)=>{c[r.cat_dia]=(c[r.cat_dia]||0)+1;return c;},{});
+    const bf=rows.reduce((f,r)=>{f[r.franja]=(f[r.franja]||0)+1;return f;},{});
+    newDOCMAP[nombre]={doc:rows[0].doc,n:rows.length,m:Math.round(vs.reduce((a,b)=>a+b,0)),p:Math.round(mu),o:rows.filter(r=>r.out).length,bm,bh,bc,bf};
+
+    // ASOC_DIA
+    const ad={h:{},f:{},fest:{}};
+    rows.forEach(r=>{
+      if(r.cat_dia==='Día hábil'){ad.h[r.diaNombre]=(ad.h[r.diaNombre]||{n:0,m:0,s:new Set()});ad.h[r.diaNombre].n++;ad.h[r.diaNombre].m+=r.valor;ad.h[r.diaNombre].s.add(r.doc);}
+      else if(r.cat_dia==='Fin de semana'){ad.f[r.diaNombre]=(ad.f[r.diaNombre]||{n:0,m:0,s:new Set()});ad.f[r.diaNombre].n++;ad.f[r.diaNombre].m+=r.valor;ad.f[r.diaNombre].s.add(r.doc);}
+      else if(r.cat_dia==='Festivo'){const fd=r.fecha.toLocaleDateString('es-CO',{day:'2-digit',month:'short'}).replace('.','');ad.fest[fd]=(ad.fest[fd]||{n:0,m:0,s:new Set()});ad.fest[fd].n++;ad.fest[fd].m+=r.valor;ad.fest[fd].s.add(r.doc);}
+    });
+    newASOC_DIA[nombre]={
+      hab:  DHAB.map(d=>({d,n:ad.h[d]?.n||0,m:Math.round(ad.h[d]?.m||0),docs:ad.h[d]?.s.size||0})),
+      finde:['Sábado','Domingo'].map(d=>({d,n:ad.f[d]?.n||0,m:Math.round(ad.f[d]?.m||0),docs:ad.f[d]?.s.size||0})),
+      festivo:Object.entries(ad.fest).map(([d,v])=>({d,n:v.n,m:Math.round(v.m),docs:v.s.size}))
+    };
+
+    // ASOC_OUT
+    const or=rows.filter(r=>r.out);
+    if(or.length){
+      const om=Math.round(or.reduce((a,r)=>a+r.valor,0));
+      newASOC_OUT[nombre]={total:or.length,monto_total:om,monto_max:Math.round(Math.max(...or.map(r=>r.valor))),monto_prom:Math.round(om/or.length),pct_monto:0,
+        by_mes:Object.entries(or.reduce((m,r)=>{m[r.mes]=(m[r.mes]||0)+1;return m;},{})).map(([m,n])=>({m,n,v:0})),
+        by_franja:Object.entries(or.reduce((f,r)=>{f[r.franja]=(f[r.franja]||0)+1;return f;},{})).map(([f,n])=>({f,n,v:0})),
+        by_cat:Object.entries(or.reduce((c,r)=>{c[r.cat_dia]=(c[r.cat_dia]||0)+1;return c;},{})).map(([c,n])=>({c,n,v:0})),
+        by_rango:Object.entries(or.reduce((rg,r)=>{const rk=rng(r.valor);rg[rk]=(rg[rk]||0)+1;return rg;},{})).map(([r2,n])=>({r:r2,n,v:0})),
+        by_metodo:Object.entries(or.reduce((me,r)=>{me[r.met]=(me[r.met]||0)+1;return me;},{})).map(([m,n])=>({m,n,v:0})),
+        by_doc:[{doc:rows[0].doc,nombre,n_ops:or.length,monto_total:om,monto_max:Math.round(Math.max(...or.map(r=>r.valor))),monto_prom:Math.round(om/or.length),metodos:[...new Set(or.map(r=>r.met))].join(', ')}],
+        top20:or.sort((a,b)=>b.valor-a.valor).slice(0,20).map(r=>({f:r.fecha.toISOString().slice(0,10),n:r.nombre,d:r.doc,v:Math.round(r.valor),fr:r.franja,cat:r.cat_dia,m:r.mes,met:r.met}))};
+    }else{
+      newASOC_OUT[nombre]={total:0,monto_total:0,monto_max:0,monto_prom:0,pct_monto:0,by_mes:[],by_franja:[],by_cat:[],by_rango:[],by_metodo:[],by_doc:[],top20:[]};
+    }
+  }
+
+  prog('[5/5] Finalizando OUT_CUBE y proyección...');
+  await new Promise(r=>setTimeout(r,20));
+
+  // ── OUT_CUBE serializado ───────────────────────────────────────────────────
+  const newOUT={};
+  const isGlob='Todos|Todos|Todos|Todos';
+  Object.entries(out).forEach(([k,ob])=>{
+    const dl2=Object.values(ob.docs).map(d=>({doc:d.doc,nombre:d.nombre,n_ops:d.n_ops,monto_total:Math.round(d.mt),monto_max:Math.round(d.mx),monto_prom:Math.round(d.mt/d.n_ops),metodos:[...d.mets].join(', ')})).sort((a,b)=>b.monto_total-a.monto_total);
+    const entry={total:ob.n,monto_total:Math.round(ob.m),monto_max:Math.round(ob.mx),monto_prom:ob.n?Math.round(ob.m/ob.n):0,pct_monto:0,
+      by_metodo:Object.entries(ob.mets).map(([m,n])=>({m,n,v:0})),
+      by_mes:Object.entries(ob.mes).map(([m,n])=>({m,n,v:0})).sort((a,b)=>a.m.localeCompare(b.m)),
+      by_franja:Object.entries(ob.fr).map(([f,n])=>({f,n,v:0})),
+      by_cat:Object.entries(ob.cat).map(([c,n])=>({c,n,v:0})),
+      by_rango:Object.entries(ob.rng).map(([r2,n])=>({r:r2,n,v:0})),
+      by_doc:dl2.slice(0,k===isGlob?20:10)
+    };
+    if(k===isGlob){
+      entry.top20=datos.filter(r=>r.out).sort((a,b)=>b.valor-a.valor).slice(0,20)
+        .map(r=>({f:r.fecha.toISOString().slice(0,10),n:r.nombre,d:r.doc,v:Math.round(r.valor),fr:r.franja,cat:r.cat_dia,m:r.mes,met:r.met}));
+    }
+    newOUT[k]=entry;
+  });
+  for(const e of ESTADOS)for(const m of MESES)for(const c of CATS)for(const f of FRANJAS){
+    const k=`${e}|${m}|${c}|${f}`;
+    if(!newOUT[k])newOUT[k]={total:0,monto_total:0,monto_max:0,monto_prom:0,pct_monto:0,by_metodo:[],by_mes:[],by_franja:[],by_cat:[],by_rango:[],by_doc:[]};
+  }
+
+  // ── PROJ_STATS ────────────────────────────────────────────────────────────
+  const ex=datos.filter(r=>r.estado==='Exito');
+  const dm={};ex.forEach(r=>{const d=r.fecha.toISOString().slice(0,10);dm[d]=(dm[d]||0)+r.valor;});
+  const dv2=Object.values(dm);
+  const mu2=dv2.reduce((a,b)=>a+b,0)/dv2.length;
+  const sd2=Math.sqrt(dv2.reduce((a,b)=>a+(b-mu2)**2,0)/dv2.length);
+  const dk=Object.keys(dm).sort();
+  const h60=dk.slice(-60).map(f=>({f,m:+(dm[f]/1e6).toFixed(3),n:0}));
+  const newPROJ={mu_dia:Math.round(mu2),sigma_dia:Math.round(sd2),mu_ops:+((ex.length/dv2.length).toFixed(1)),
+    sigma_ops:+(Math.sqrt(ex.length/dv2.length).toFixed(1)),cv_dia:+(sd2/mu2*100).toFixed(2),
+    min_dia:Math.round(Math.min(...dv2)),max_dia:Math.round(Math.max(...dv2)),
+    fecha_inicio:dk[0],fecha_fin:dk[dk.length-1],n_dias:dv2.length,hist:h60,Z:1.64,
+    fuente:'BRE-B Enviar · Solo operaciones Éxito'};
+
+  return {CUBE:newCUBE,DIA_CUBE:newDIA,ASOC_DIA:newASOC_DIA,
+          OUT_CUBE:newOUT,ASOC_OUT:newASOC_OUT,DOCMAP:newDOCMAP,
+          PROJ_STATS:newPROJ,NOMBRES:Object.keys(newDOCMAP).sort(),ESTADOS};
+}
+
+
+async function iniciarCarga(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  event.target.value = '';
+  if(typeof XLSX === 'undefined'){
+    alert('SheetJS no cargado. Verifica conexion a internet y recarga (F5).');
+    return;
+  }
+  const btn = document.getElementById('btn-cargar-excel');
+  const origHtml = btn ? btn.innerHTML : '';
+  if(btn){ btn.disabled=true; btn.innerHTML='Procesando...'; btn.style.background='#f0c85a'; btn.style.color='#1a3330'; }
+
+  const ov  = document.getElementById('carga-overlay');
+  const tit = document.getElementById('carga-titulo');
+  const sub = document.getElementById('carga-sub');
+  const prg = document.getElementById('carga-progreso');
+  const spn = document.getElementById('carga-spinner');
+  const ico = document.getElementById('carga-icono');
+  function mostrar(t,s,p){ if(tit)tit.textContent=t; if(sub)sub.textContent=s||''; if(prg)prg.textContent=p||''; }
+
+  spn.style.display='block'; ico.style.display='none'; ico.innerHTML='';
+  mostrar('Leyendo '+file.name+'...','Por favor espera, puede tardar 15-30 segundos','');
+  if(ov) ov.classList.add('open');
+  await sleep(100);
+
+  try{
+    const buf = await file.arrayBuffer();
+    const wb  = XLSX.read(buf, {type:'array', cellDates:false});
+    const sh  = wb.SheetNames.find(n=>/movimiento/i.test(n)) || wb.SheetNames[0];
+    mostrar('Leyendo hoja: '+sh,'','');
+    await sleep(50);
+
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sh], {defval:''});
+    if(!rows.length) throw new Error('La hoja "'+sh+'" esta vacia');
+
+    const r0=rows[0];
+    console.log('Columnas:', Object.keys(r0).slice(0,15).join(', '));
+    console.log('Nombre Transaccion[0]:', r0['Nombre Transaccion']);
+    console.log('Fecha[0]:', r0['Fecha'], typeof r0['Fecha']);
+    console.log('Valor[0]:', r0['Valor'], typeof r0['Valor']);
+    mostrar('','',rows.length.toLocaleString('es-CO')+' filas leidas');
+    await sleep(50);
+
+    // Filtrar BRE-B Enviar
+    const df = rows.filter(r=>{
+      const nt = String(r['Nombre Transaccion']||'').replace(/'/g,'').trim();
+      return /bre/i.test(nt) && /enviar/i.test(nt);
+    });
+    if(!df.length){
+      throw new Error(
+        'No se encontraron filas BRE-B Enviar.\n'+
+        'Nombre Transaccion[0]: "'+String(r0['Nombre Transaccion']||'').slice(0,80)+'"\n'+
+        'Total filas: '+rows.length+'. Revisa F12 > Consola.'
+      );
+    }
+    mostrar('','',df.length.toLocaleString('es-CO')+' ops BRE-B Enviar');
+    await sleep(50);
+
+    // Parsear cada fila
+    const DIAS={0:'Domingo',1:'Lunes',2:'Martes',3:'Miércoles',4:'Jueves',5:'Viernes',6:'Sábado'};
+
+    function parseFecha(raw){
+      if(raw instanceof Date && !isNaN(raw)) return raw;
+      if(typeof raw==='number' && raw>1)
+        return new Date(new Date(1899,11,30).getTime()+Math.floor(raw)*86400000);
+      if(typeof raw==='string'){
+        const s=raw.replace(/'/g,'').trim();
+        if(/^\d{4}-\d{2}-\d{2}/.test(s)) return new Date(s.slice(0,10)+'T12:00:00');
+        const p=s.split(/[\/\-\.]/);
+        if(p.length===3){
+          const d=p[0].length===4?new Date(+p[0],+p[1]-1,+p[2]):new Date(+p[2],+p[1]-1,+p[0]);
+          if(!isNaN(d)) return d;
+        }
+        const d2=new Date(s); if(!isNaN(d2)) return d2;
+      }
+      return null;
+    }
+    function lS(v){ return String(v||'').replace(/'/g,'').trim(); }
+    function parseNum(v){
+      if(typeof v==='number') return v;
+      return parseFloat(String(v||'').replace(/\./g,'').replace(',','.').replace(/[^0-9.-]/g,''))||0;
+    }
+
+    const datos=[]; let nFail=0;
+    for(const r of df){
+      const valor=parseNum(r['Valor']); if(valor<=0){nFail++;continue;}
+      const fecha=parseFecha(r['Fecha']); if(!fecha){nFail++;continue;}
+      const mes=fecha.getFullYear()+'-'+String(fecha.getMonth()+1).padStart(2,'0');
+      const diaNombre=DIAS[fecha.getDay()]||'';
+      const hora=parseInt(lS(r['Hora_1']||r['Hora']||'0'))||0;
+      let franja=lS(r['Franja']);
+      if(!['Madrugada','Mañana','Tarde','Noche'].includes(franja))
+        franja=hora<6?'Madrugada':hora<12?'Mañana':hora<18?'Tarde':'Noche';
+      const festR=lS(r['Festivo o No']), tdR=lS(r['Tipo Día']||r['Tipo Dia']||r['Tipo D\u00eda']||'');
+      let cat_dia='Día hábil';
+      if(festR==='Festivos') cat_dia='Festivo';
+      else if(/fin.*semana/i.test(tdR)) cat_dia='Fin de semana';
+      const estado=lS(r['Nombre Error'])||'Sin información';
+      const doc=lS(r['Documento']).replace(/\.0$/,'');
+      const nombre=String(r['Nombre Cliente Origen']||'Sin nombre').replace(/'/g,'').trim()
+        .replace(/\w\S*/g,w=>w[0].toUpperCase()+w.slice(1).toLowerCase());
+      datos.push({valor,fecha,mes,diaNombre,hora,franja,cat_dia,estado,doc,nombre});
+    }
+
+    console.log('Validas:',datos.length,'Descartadas:',nFail);
+    if(!datos.length)
+      throw new Error('0 filas validas de '+df.length+' BRE-B (descartadas:'+nFail+'). Revisa F12 > Consola.');
+
+    mostrar('Recalculando...','Espera un momento, procesando '+datos.length.toLocaleString('es-CO')+' filas','');
+    await sleep(100);
+
+    const newData = await recalcularCubos(datos, (msg)=>{ if(prg) prg.textContent=msg; });
+
+    CUBE=newData.CUBE; DOCMAP=newData.DOCMAP; DIA_CUBE=newData.DIA_CUBE;
+    ASOC_DIA=newData.ASOC_DIA; if(newData.OUT_CUBE) OUT_CUBE=newData.OUT_CUBE; ASOC_OUT=newData.ASOC_OUT;
+    PROJ_STATS=newData.PROJ_STATS; NOMBRES=newData.NOMBRES; ESTADOS=newData.ESTADOS;
+    // Actualizar UI dinámica (meses, header, footer)
+    const mesesNuevos = [...new Set(datos.map(r=>r.mes))].sort();
+    actualizarUITrasRecarga(datos, mesesNuevos);
+    resetFilters();
+
+    const fs=datos.map(r=>r.fecha).sort((a,b)=>a-b);
+    const fi=fs[0].toISOString().slice(0,10), ff=fs[fs.length-1].toISOString().slice(0,10);
+    spn.style.display='none'; ico.style.display='block';
+    ico.innerHTML='<div class="carga-ok" style="color:#2e9e8a;font-size:36px;">&#10003;</div>';
+    mostrar('Tablero actualizado!',datos.length.toLocaleString('es-CO')+' ops ' +fi+' al '+ff,'');
+    if(btn){ btn.innerHTML='&#10003; Actualizado'; btn.style.background='#2e9e8a'; btn.style.color='#fff'; }
+    setTimeout(()=>{
+      if(ov) ov.classList.remove('open');
+      if(btn){ btn.disabled=false; btn.innerHTML=origHtml; btn.style.background=''; btn.style.color=''; }
+    },2500);
+
+  }catch(err){
+    console.error('Error carga Excel:',err);
+    spn.style.display='none'; ico.style.display='block';
+    ico.innerHTML='<div style="color:#e17055;font-size:36px;">&#10007;</div>';
+    mostrar('Error: '+(err.message||'desconocido').slice(0,120),'Abre F12 > Consola para detalles','');
+    if(btn){ btn.disabled=false; btn.innerHTML=origHtml; btn.style.background=''; btn.style.color=''; }
+    setTimeout(()=>{ if(ov) ov.classList.remove('open'); },6000);
+  }
+}
+
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeOutPanel();});
+// Poblar select de meses desde los datos iniciales
+(function initSelectMeses(){
+  const sel = document.getElementById('f-mes');
+  if(!sel) return;
+  const mesNombres = {
+    '01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun',
+    '07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'
+  };
+  // Extraer meses del CUBE global
+  const globalKey = CUBE['Todos|Todos|Todos|Todos'];
+  if(globalKey && globalKey.by_mes){
+    const meses = globalKey.by_mes.map(r=>r.m).sort();
+    sel.innerHTML = '<option value="Todos">Todos los meses</option>';
+    meses.forEach(m=>{
+      const [y,mo]=m.split('-');
+      sel.innerHTML += `<option value="${m}">${mesNombres[mo]} ${y}</option>`;
+    });
+  }
+})();
+render();
+</script>
 <!-- ═══════════════════════════════════════════════════════
      PANEL INFORME PDF
 ══════════════════════════════════════════════════════════ -->
@@ -1332,6 +3345,6 @@ render();
 
   </div><!-- /informe-panel -->
 </div><!-- /informe-overlay -->
-
+</script>
 </body>
 </html>
