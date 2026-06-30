@@ -1164,7 +1164,7 @@ function toggleNota(){
 
 <script>
 // ── Variables globales ─────────────────────────────────────────────────────────────────
-// Generado automáticamente por generar.py el 2026-06-29 21:28
+// Generado automáticamente por generar.py el 2026-06-30 07:48
 // Período: 2025-10-01 al 2026-06-28 | 24,668 operaciones | 937 asociados
 // ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -1665,7 +1665,7 @@ function resetFilters(){
 
 // ── Render principal ─────────────────────────────────────────────────────────
 function render(){
-  if(selectedAsoc&&DOCMAP[selectedAsoc]) renderAsoc(selectedAsoc);
+  if(selectedAsoc) renderAsoc(selectedAsoc);
   else renderCube();
 }
 
@@ -1707,8 +1707,84 @@ function renderCube(){
   if(isOutPanelOpen()) buildOutPanel();
 }
 
+// ── Calcula datos del asociado EN TIEMPO REAL, combinando con filtros activos ──
+function computeAsocData(nombre){
+  if(!DATA_RAW || !DATA_RAW.rows) return null;
+  const {estados,meses,cats,franjas,docs,nombres,rows} = DATA_RAW;
+  const nIdx = nombres.indexOf(nombre);
+  if(nIdx === -1) return null;
+
+  const fEstado = getEstado(), fMes = getMes(), fCat = getCat(), fFranja = getFranja();
+
+  // Filtrar filas: nombre + todos los filtros activos (excepto fecha, manejada aparte)
+  const sub = rows.filter(r=>{
+    const [feI,eI,mI,cI,frI,hora,valor,dI,nI] = r;
+    if(nI !== nIdx) return false;
+    if(fEstado !== 'Todos' && estados[eI] !== fEstado) return false;
+    if(fMes    !== 'Todos' && meses[mI]   !== fMes)    return false;
+    if(fCat    !== 'Todos' && cats[cI]    !== fCat)    return false;
+    if(fFranja !== 'Todos' && franjas[frI]!== fFranja) return false;
+    return true;
+  });
+
+  // Calcular límite de outlier global (igual que OUT)
+  const limIQR = OUT.lim_iqr, limReg = OUT.lim_reg;
+
+  let n=0, m=0, outs=0;
+  const hm={}, mm={}, cm={}, fm={};
+  const DIAS=['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+  const habAcc={}, findeAcc={};
+
+  sub.forEach(r=>{
+    const [feI,eI,mI,cI,frI,hora,valor] = r;
+    const mes=meses[mI], cat=cats[cI], fr=franjas[frI];
+    const fecha = DATA_RAW.fechas[feI];
+    n++; m+=valor;
+    if(valor>limIQR || valor>=limReg) outs++;
+    hm[hora]=(hm[hora]||0)+valor;
+    mm[mes]=mm[mes]||{n:0,m:0}; mm[mes].n++; mm[mes].m+=valor;
+    cm[cat]=(cm[cat]||0)+1;
+    fm[fr]=(fm[fr]||0)+1;
+    if(fecha){
+      const d=new Date(fecha+'T12:00:00');
+      const dn=DIAS[d.getDay()];
+      if(cat==='Día hábil'){
+        habAcc[dn]=habAcc[dn]||{n:0,m:0}; habAcc[dn].n++; habAcc[dn].m+=valor;
+      } else if(cat==='Fin de semana'){
+        findeAcc[dn]=findeAcc[dn]||{n:0,m:0}; findeAcc[dn].n++; findeAcc[dn].m+=valor;
+      }
+    }
+  });
+
+  const HABS=['Lunes','Martes','Miércoles','Jueves','Viernes'];
+  const FINS=['Sábado','Domingo'];
+  const hab = HABS.map(d=>({d,n:(habAcc[d]||{}).n||0,m:(habAcc[d]||{}).m||0,docs:(habAcc[d]?1:0)}));
+  const finde = FINS.map(d=>({d,n:(findeAcc[d]||{}).n||0,m:(findeAcc[d]||{}).m||0,docs:(findeAcc[d]?1:0)}));
+
+  return {
+    n, m, p: n?Math.round(m/n):0, o: outs,
+    bm: Object.entries(mm).sort((a,b)=>a[0].localeCompare(b[0])).map(([mes,v])=>[mes,v.n,v.m]),
+    bh: hm, bc: cm, bf: fm,
+    _dia: {hab, finde, festivo:[]}
+  };
+}
+
 function renderAsoc(nombre){
-  const d=DOCMAP[nombre]; if(!d) return;
+  const d = computeAsocData(nombre);
+  if(!d || d.n===0){
+    document.getElementById('k-ops').textContent='0';
+    document.getElementById('k-monto').textContent='$0 M';
+    document.getElementById('k-prom').textContent='Prom. $0';
+    document.getElementById('k-docs').textContent='1';
+    document.getElementById('k-out').textContent='0';
+    document.getElementById('k-outpct').textContent='0% del total';
+    document.getElementById('mes-nota').textContent='(sin operaciones con estos filtros)';
+    document.getElementById('mes-nota').style.color='#e17055';
+    buildMesChart([]); buildHoraChart([]);
+    buildBarsCat([],0); buildBarsFranja([],0);
+    document.getElementById('top-docs').innerHTML='<div style="font-size:12px;color:#7a9a97;padding:8px 0;">Sin datos para este asociado con los filtros activos</div>';
+    return;
+  }
   document.getElementById('k-ops').textContent=d.n.toLocaleString('es-CO');
   document.getElementById('k-monto').textContent=fmtM(d.m);
   document.getElementById('k-prom').textContent='Prom. '+fmtCOP(d.p);
@@ -1718,7 +1794,7 @@ function renderAsoc(nombre){
   document.getElementById('mes-nota').textContent='(filtrado por asociado)';
   document.getElementById('mes-nota').style.color='#2e9e8a';
   buildMesChart(d.bm.map(r=>({m:r[0],n:r[1],v:r[2]})));
-  buildHoraChart(Object.entries(d.bh).map(([h,n])=>({h:parseInt(h),n,m:0})));
+  buildHoraChart(Object.entries(d.bh).map(([h,m])=>({h:parseInt(h),n:0,m})));
   buildDiaChart();
   buildFindeChart();
   buildFestivoChart();
@@ -1765,6 +1841,12 @@ function buildHoraChart(by_hora){
 }
 
 function getDiaData(){
+  if(selectedAsoc){
+    // Asociado seleccionado: calcular en tiempo real con filtros activos
+    const d = computeAsocData(selectedAsoc);
+    if(d && d._dia) return d._dia;
+    return {hab:[],finde:[],festivo:[]};
+  }
   if(hayFiltroFecha()){
     // Con rango activo: usar _dia del miniCube (calculado desde DATA_RAW para ese rango)
     const mc=getMiniCube(getFechaDesde(), getFechaHasta());
@@ -1774,9 +1856,6 @@ function getDiaData(){
       if(cell && cell._dia) return cell._dia;
     }
     return {hab:[],finde:[],festivo:[]};
-  }
-  if(selectedAsoc && ASOC_DIA[selectedAsoc]){
-    return ASOC_DIA[selectedAsoc];
   }
   const key = getCubeKey();
   return DIA_CUBE[key] || DIA_CUBE['Todos|Todos|Todos|Todos'];
